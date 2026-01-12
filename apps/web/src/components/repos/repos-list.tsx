@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
 import { formatRelativeTime } from '@laneshare/shared'
+import { Progress } from '@/components/ui/progress'
 import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink } from 'lucide-react'
 import {
   AlertDialog,
@@ -29,6 +30,9 @@ interface Repo {
   last_synced_at: string | null
   sync_error: string | null
   installed_at: string
+  sync_progress: number | null
+  sync_total: number | null
+  sync_stage: 'discovering' | 'indexing' | 'embedding' | 'generating_docs' | null
 }
 
 interface ReposListProps {
@@ -36,11 +40,33 @@ interface ReposListProps {
   projectId: string
 }
 
+interface SyncProgress {
+  progress: number
+  total: number
+  stage: string | null
+}
+
 export function ReposList({ repos, projectId }: ReposListProps) {
   const { toast } = useToast()
   const router = useRouter()
   const [syncingRepos, setSyncingRepos] = useState<Set<string>>(new Set())
   const [deletingRepos, setDeletingRepos] = useState<Set<string>>(new Set())
+  const [repoProgress, setRepoProgress] = useState<Record<string, SyncProgress>>({})
+
+  const getStageLabel = (stage: string | null): string => {
+    switch (stage) {
+      case 'discovering':
+        return 'Discovering files...'
+      case 'indexing':
+        return 'Indexing files...'
+      case 'embedding':
+        return 'Generating embeddings...'
+      case 'generating_docs':
+        return 'Generating documentation...'
+      default:
+        return 'Syncing...'
+    }
+  }
 
   const handleSync = async (repoId: string) => {
     setSyncingRepos((prev) => new Set(prev).add(repoId))
@@ -60,15 +86,33 @@ export function ReposList({ repos, projectId }: ReposListProps) {
         description: 'Repository sync has been initiated. This may take a few minutes.',
       })
 
-      // Poll for completion
+      // Poll for completion and progress
       const checkStatus = async () => {
         const statusRes = await fetch(`/api/repos/${repoId}`)
         if (statusRes.ok) {
           const repo = await statusRes.json()
+
+          // Update progress state
+          if (repo.status === 'SYNCING') {
+            setRepoProgress((prev) => ({
+              ...prev,
+              [repoId]: {
+                progress: repo.sync_progress || 0,
+                total: repo.sync_total || 0,
+                stage: repo.sync_stage,
+              },
+            }))
+          }
+
           if (repo.status === 'SYNCED' || repo.status === 'ERROR') {
             setSyncingRepos((prev) => {
               const next = new Set(prev)
               next.delete(repoId)
+              return next
+            })
+            setRepoProgress((prev) => {
+              const next = { ...prev }
+              delete next[repoId]
               return next
             })
             router.refresh()
@@ -81,13 +125,13 @@ export function ReposList({ repos, projectId }: ReposListProps) {
             } else {
               toast({
                 title: 'Sync Complete',
-                description: 'Repository has been indexed successfully.',
+                description: 'Repository has been indexed and documentation generated.',
               })
             }
             return
           }
         }
-        setTimeout(checkStatus, 2000)
+        setTimeout(checkStatus, 1500)
       }
       checkStatus()
     } catch (error) {
@@ -196,7 +240,28 @@ export function ReposList({ repos, projectId }: ReposListProps) {
                 </Badge>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
+              {/* Progress bar when syncing */}
+              {isSyncing && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      {getStageLabel(repoProgress[repo.id]?.stage || repo.sync_stage)}
+                    </span>
+                    {(repoProgress[repo.id]?.total || repo.sync_total || 0) > 0 && (
+                      <span className="text-muted-foreground">
+                        {repoProgress[repo.id]?.progress || repo.sync_progress || 0} / {repoProgress[repo.id]?.total || repo.sync_total} files
+                      </span>
+                    )}
+                  </div>
+                  <Progress
+                    value={repoProgress[repo.id]?.progress || repo.sync_progress || 0}
+                    max={repoProgress[repo.id]?.total || repo.sync_total || 100}
+                    className="h-2"
+                  />
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <div className="text-sm text-muted-foreground">
                   {repo.last_synced_at ? (

@@ -57,10 +57,16 @@ export async function POST(
     )
   }
 
-  // Update repo status to syncing
+  // Update repo status to syncing with initial progress
   await serviceClient
     .from('repos')
-    .update({ status: 'SYNCING', sync_error: null })
+    .update({
+      status: 'SYNCING',
+      sync_error: null,
+      sync_progress: 0,
+      sync_total: 0,
+      sync_stage: 'discovering',
+    })
     .eq('id', params.id)
 
   // Start sync in background
@@ -99,6 +105,15 @@ async function syncRepository(
       shouldIndexFile(item.path, item.size)
   )
 
+  // Update progress with total file count
+  await supabase
+    .from('repos')
+    .update({
+      sync_total: indexableFiles.length,
+      sync_stage: 'indexing',
+    })
+    .eq('id', repoId)
+
   // Delete existing chunks for this repo
   await supabase.from('chunks').delete().eq('repo_id', repoId)
   await supabase.from('repo_files').delete().eq('repo_id', repoId)
@@ -114,6 +129,7 @@ async function syncRepository(
     metadata: Record<string, unknown>
   }> = []
 
+  let filesProcessed = 0
   for (let i = 0; i < indexableFiles.length; i += batchSize) {
     const batch = indexableFiles.slice(i, i + batchSize)
 
@@ -158,7 +174,20 @@ async function syncRepository(
         }
       })
     )
+
+    // Update progress after each batch
+    filesProcessed += batch.length
+    await supabase
+      .from('repos')
+      .update({ sync_progress: filesProcessed })
+      .eq('id', repoId)
   }
+
+  // Update stage to embedding
+  await supabase
+    .from('repos')
+    .update({ sync_stage: 'embedding' })
+    .eq('id', repoId)
 
   // Generate embeddings in batches
   const embeddingBatchSize = 50
@@ -183,26 +212,34 @@ async function syncRepository(
     }
   }
 
-  // Update repo status
+  // Update stage to generating docs
+  await supabase
+    .from('repos')
+    .update({ sync_stage: 'generating_docs' })
+    .eq('id', repoId)
+
+  // Trigger documentation generation and wait for completion before marking as synced
+  try {
+    const docResult = await runDocGeneration(repo.project_id, repoId, supabase)
+    if (docResult.errors.length > 0) {
+      console.log(`[DocGen] Completed with ${docResult.errors.length} errors:`, docResult.errors)
+    } else {
+      console.log(`[DocGen] Successfully generated documentation for repo ${repoId}`)
+    }
+  } catch (error) {
+    console.error('[DocGen] Documentation generation failed:', error)
+  }
+
+  // Update repo status to synced and clear progress fields
   await supabase
     .from('repos')
     .update({
       status: 'SYNCED',
       last_synced_at: new Date().toISOString(),
       sync_error: null,
+      sync_progress: null,
+      sync_total: null,
+      sync_stage: null,
     })
     .eq('id', repoId)
-
-  // Trigger documentation generation in background
-  runDocGeneration(repo.project_id, repoId, supabase)
-    .then((result) => {
-      if (result.errors.length > 0) {
-        console.log(`[DocGen] Completed with ${result.errors.length} errors:`, result.errors)
-      } else {
-        console.log(`[DocGen] Successfully generated documentation for repo ${repoId}`)
-      }
-    })
-    .catch((error) => {
-      console.error('[DocGen] Documentation generation failed:', error)
-    })
 }

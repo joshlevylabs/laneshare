@@ -1,5 +1,8 @@
 import type { Task, DocPage, SearchResult, Repo } from '../types'
 
+// Re-export doc generation prompts
+export * from './doc-generation'
+
 export interface LanePilotContext {
   task?: Task
   projectName: string

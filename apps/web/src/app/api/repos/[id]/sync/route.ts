@@ -1,6 +1,7 @@
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { GitHubClient } from '@/lib/github'
 import { getEmbeddingProvider } from '@/lib/embeddings'
+import { runDocGeneration } from '@/lib/doc-generator'
 import { chunkContent, estimateTokens, shouldIndexFile, detectLanguage } from '@laneshare/shared'
 import { NextResponse } from 'next/server'
 
@@ -191,4 +192,17 @@ async function syncRepository(
       sync_error: null,
     })
     .eq('id', repoId)
+
+  // Trigger documentation generation in background
+  runDocGeneration(repo.project_id, repoId, supabase)
+    .then((result) => {
+      if (result.errors.length > 0) {
+        console.log(`[DocGen] Completed with ${result.errors.length} errors:`, result.errors)
+      } else {
+        console.log(`[DocGen] Successfully generated documentation for repo ${repoId}`)
+      }
+    })
+    .catch((error) => {
+      console.error('[DocGen] Documentation generation failed:', error)
+    })
 }

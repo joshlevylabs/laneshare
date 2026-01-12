@@ -1,5 +1,8 @@
 // Database entity types
 
+// Re-export architecture types
+export * from './architecture'
+
 export type ProjectRole = 'OWNER' | 'MAINTAINER' | 'MEMBER'
 
 export type TaskStatus = 'BACKLOG' | 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE'

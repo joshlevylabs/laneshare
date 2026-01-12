@@ -1,5 +1,8 @@
 import { CHUNKING_CONFIG } from '../prompts'
 
+// Re-export select value utilities
+export * from './select-values'
+
 /**
  * Estimate token count for a string (rough approximation)
  */

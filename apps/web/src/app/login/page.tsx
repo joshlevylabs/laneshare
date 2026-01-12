@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -40,7 +40,14 @@ export default function LoginPage() {
       return
     }
 
-    router.push('/projects')
+    // Check for pending invite
+    const pendingInvite = sessionStorage.getItem('pendingInvite')
+    if (pendingInvite) {
+      sessionStorage.removeItem('pendingInvite')
+      router.push(`/invite/${pendingInvite}`)
+    } else {
+      router.push('/projects')
+    }
     router.refresh()
   }
 
@@ -86,10 +93,17 @@ export default function LoginPage() {
   const handleGitHubLogin = async () => {
     setIsLoading(true)
 
+    // Check for pending invite to include in redirect
+    const pendingInvite = sessionStorage.getItem('pendingInvite')
+    const redirectPath = pendingInvite ? `/invite/${pendingInvite}` : '/projects'
+    if (pendingInvite) {
+      sessionStorage.removeItem('pendingInvite')
+    }
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectPath)}`,
         scopes: 'repo read:user user:email',
       },
     })

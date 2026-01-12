@@ -11,6 +11,7 @@ import {
   FileText,
   Settings,
   Search,
+  Map,
 } from 'lucide-react'
 
 interface ProjectSidebarProps {
@@ -47,6 +48,11 @@ const navItems = [
     title: 'Documentation',
     href: '/docs',
     icon: FileText,
+  },
+  {
+    title: 'Architecture Map',
+    href: '/map',
+    icon: Map,
   },
   {
     title: 'Settings',

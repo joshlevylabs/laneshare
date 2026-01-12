@@ -459,6 +459,161 @@ export type Database = {
           created_at?: string
         }
       }
+      project_invitations: {
+        Row: {
+          id: string
+          project_id: string
+          token: string
+          role: 'MAINTAINER' | 'MEMBER'
+          created_by: string
+          accepted_by: string | null
+          status: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED'
+          expires_at: string
+          created_at: string
+          accepted_at: string | null
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          token: string
+          role?: 'MAINTAINER' | 'MEMBER'
+          created_by: string
+          accepted_by?: string | null
+          status?: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED'
+          expires_at: string
+          created_at?: string
+          accepted_at?: string | null
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          token?: string
+          role?: 'MAINTAINER' | 'MEMBER'
+          created_by?: string
+          accepted_by?: string | null
+          status?: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED'
+          expires_at?: string
+          created_at?: string
+          accepted_at?: string | null
+        }
+      }
+      project_service_connections: {
+        Row: {
+          id: string
+          project_id: string
+          service: 'supabase' | 'vercel'
+          display_name: string
+          status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+          config_json: Json
+          secret_encrypted: string
+          last_synced_at: string | null
+          last_sync_error: string | null
+          created_by: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          service: 'supabase' | 'vercel'
+          display_name: string
+          status?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+          config_json?: Json
+          secret_encrypted: string
+          last_synced_at?: string | null
+          last_sync_error?: string | null
+          created_by: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          service?: 'supabase' | 'vercel'
+          display_name?: string
+          status?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+          config_json?: Json
+          secret_encrypted?: string
+          last_synced_at?: string | null
+          last_sync_error?: string | null
+          created_by?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      service_assets: {
+        Row: {
+          id: string
+          project_id: string
+          connection_id: string
+          service: 'supabase' | 'vercel'
+          asset_type: string
+          asset_key: string
+          name: string
+          data_json: Json
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          connection_id: string
+          service: 'supabase' | 'vercel'
+          asset_type: string
+          asset_key: string
+          name: string
+          data_json?: Json
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          connection_id?: string
+          service?: 'supabase' | 'vercel'
+          asset_type?: string
+          asset_key?: string
+          name?: string
+          data_json?: Json
+          updated_at?: string
+        }
+      }
+      service_sync_runs: {
+        Row: {
+          id: string
+          project_id: string
+          connection_id: string
+          started_at: string
+          finished_at: string | null
+          status: 'RUNNING' | 'SUCCESS' | 'ERROR'
+          stats_json: Json
+          error: string | null
+          triggered_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          connection_id: string
+          started_at?: string
+          finished_at?: string | null
+          status?: 'RUNNING' | 'SUCCESS' | 'ERROR'
+          stats_json?: Json
+          error?: string | null
+          triggered_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          connection_id?: string
+          started_at?: string
+          finished_at?: string | null
+          status?: 'RUNNING' | 'SUCCESS' | 'ERROR'
+          stats_json?: Json
+          error?: string | null
+          triggered_by?: string | null
+          created_at?: string
+        }
+      }
     }
     Functions: {
       is_project_member: {
@@ -503,6 +658,183 @@ export type Database = {
           repo_name: string
         }[]
       }
+      get_valid_invitation: {
+        Args: { p_token: string }
+        Returns: {
+          id: string
+          project_id: string
+          role: 'MAINTAINER' | 'MEMBER'
+          project_name: string
+        }[]
+      }
+      is_service_connection_admin: {
+        Args: { p_connection_id: string }
+        Returns: boolean
+      }
     }
   }
+}
+
+// ===============================================
+// CONNECTED SERVICES TYPES
+// ===============================================
+
+export type ServiceType = 'supabase' | 'vercel'
+export type ServiceConnectionStatus = 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+export type ServiceSyncStatus = 'RUNNING' | 'SUCCESS' | 'ERROR'
+
+// Supabase-specific asset types
+export type SupabaseAssetType =
+  | 'table'
+  | 'column'
+  | 'policy'
+  | 'function'
+  | 'trigger'
+  | 'bucket'
+  | 'auth_provider'
+
+// Vercel-specific asset types
+export type VercelAssetType =
+  | 'vercel_project'
+  | 'deployment'
+  | 'domain'
+  | 'env_var'
+
+export type ServiceAssetType = SupabaseAssetType | VercelAssetType
+
+// Configuration types for each service
+export interface SupabaseConfig {
+  supabase_url: string
+  project_ref?: string
+}
+
+export interface VercelConfig {
+  team_id?: string
+  team_slug?: string
+  project_ids?: string[]
+}
+
+export type ServiceConfig = SupabaseConfig | VercelConfig
+
+// Secret types for each service (what gets encrypted)
+export interface SupabaseSecrets {
+  service_role_key: string
+}
+
+export interface VercelSecrets {
+  token: string
+}
+
+export type ServiceSecrets = SupabaseSecrets | VercelSecrets
+
+// Stats from sync operations
+export interface SupabaseSyncStats {
+  tables: number
+  columns: number
+  policies: number
+  functions: number
+  triggers: number
+  buckets: number
+  auth_providers: number
+}
+
+export interface VercelSyncStats {
+  projects: number
+  deployments: number
+  domains: number
+  env_vars: number
+}
+
+export type ServiceSyncStats = SupabaseSyncStats | VercelSyncStats
+
+// Asset data payloads
+export interface TableAssetData {
+  schema: string
+  name: string
+  columns: ColumnInfo[]
+  primary_key?: string[]
+  foreign_keys?: ForeignKeyInfo[]
+  row_count?: number
+}
+
+export interface ColumnInfo {
+  name: string
+  type: string
+  nullable: boolean
+  default_value?: string
+  is_primary_key?: boolean
+}
+
+export interface ForeignKeyInfo {
+  column: string
+  references_table: string
+  references_column: string
+}
+
+export interface PolicyAssetData {
+  name: string
+  table_name: string
+  schema: string
+  command: string // SELECT, INSERT, UPDATE, DELETE, ALL
+  definition: string
+  check?: string
+  roles: string[]
+}
+
+export interface FunctionAssetData {
+  name: string
+  schema: string
+  language: string
+  return_type: string
+  arguments: string
+  definition?: string
+  is_trigger: boolean
+}
+
+export interface BucketAssetData {
+  id: string
+  name: string
+  public: boolean
+  file_size_limit?: number
+  allowed_mime_types?: string[]
+}
+
+export interface AuthProviderAssetData {
+  provider: string
+  enabled: boolean
+}
+
+export interface VercelProjectAssetData {
+  id: string
+  name: string
+  framework?: string
+  git_repo?: {
+    repo: string
+    type: string
+  }
+}
+
+export interface DeploymentAssetData {
+  uid: string
+  name: string
+  url: string
+  state: string
+  created_at: string
+  ready_at?: string
+  source?: string
+  target?: string
+}
+
+export interface DomainAssetData {
+  name: string
+  project_id: string
+  verified: boolean
+  configured: boolean
+}
+
+export interface EnvVarAssetData {
+  key: string
+  target: string[] // production, preview, development
+  type: string // plain, encrypted, secret
+  // Never store the value!
 }

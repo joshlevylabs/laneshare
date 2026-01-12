@@ -2,6 +2,8 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { MembersList } from '@/components/settings/members-list'
 import { AddMemberDialog } from '@/components/settings/add-member-dialog'
+import { CreateInviteDialog } from '@/components/settings/create-invite-dialog'
+import { InvitationsList } from '@/components/settings/invitations-list'
 import { ProjectSettingsForm } from '@/components/settings/project-settings-form'
 
 export default async function SettingsPage({
@@ -26,6 +28,12 @@ export default async function SettingsPage({
     .select('*, profiles(id, email, full_name)')
     .eq('project_id', params.id)
     .order('created_at')
+
+  const { data: invitations } = await supabase
+    .from('project_invitations')
+    .select('*, profiles:created_by(email, full_name)')
+    .eq('project_id', params.id)
+    .order('created_at', { ascending: false })
 
   const currentUserRole = members?.find((m: any) => m.user_id === user?.id)?.role || 'MEMBER'
   const isAdmin = ['OWNER', 'MAINTAINER'].includes(currentUserRole)
@@ -80,6 +88,36 @@ export default async function SettingsPage({
           />
         </CardContent>
       </Card>
+
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Invite Links</CardTitle>
+                <CardDescription>
+                  Generate shareable links to invite team members
+                </CardDescription>
+              </div>
+              <CreateInviteDialog projectId={params.id} />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <InvitationsList
+              projectId={params.id}
+              invitations={invitations?.map((i: any) => ({
+                id: i.id,
+                token: i.token,
+                role: i.role,
+                status: i.status,
+                expires_at: i.expires_at,
+                created_at: i.created_at,
+                profiles: i.profiles,
+              })) || []}
+            />
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

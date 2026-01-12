@@ -10,6 +10,7 @@ LaneShare is a web application that enables vibe-coding collaboration across mul
 - **Task Management**: Kanban-style task board with drag-and-drop
 - **Auto Documentation**: AI-assisted documentation that updates based on implementation summaries
 - **Team Collaboration**: Invite team members with role-based permissions
+- **Connected Services**: Connect Supabase and Vercel to sync infrastructure metadata and auto-generate documentation
 
 ## Tech Stack
 
@@ -175,6 +176,35 @@ Use the Task Board to:
 - Edit pages in the built-in Markdown editor
 - AI can suggest documentation updates based on implementation summaries
 
+### 9. Connected Services
+
+Connect external services to automatically sync infrastructure metadata and generate documentation.
+
+#### Supabase Connection
+
+1. Go to Project → Services
+2. Click "Connect Supabase"
+3. Enter your Supabase project URL and Service Role Key
+4. Click "Test & Connect"
+5. Assets synced:
+   - Database tables and columns
+   - RLS policies
+   - Functions and triggers
+   - Storage buckets
+
+#### Vercel Connection
+
+1. Go to Project → Services
+2. Click "Connect Vercel"
+3. Enter your Vercel Access Token (create at [vercel.com/account/tokens](https://vercel.com/account/tokens))
+4. Optionally select a team and specific projects
+5. Click "Connect"
+6. Assets synced:
+   - Projects and frameworks
+   - Recent deployments
+   - Domains
+   - Environment variable names (values are never stored)
+
 ## API Endpoints
 
 ### Projects
@@ -217,11 +247,25 @@ Use the Task Board to:
 - `PATCH /api/projects/:id/docs/:docId` - Update doc
 - `DELETE /api/projects/:id/docs/:docId` - Delete doc
 
+### Connected Services
+- `GET /api/projects/:id/services` - List service connections
+- `GET /api/projects/:id/services/assets` - List service assets (with filters)
+- `POST /api/projects/:id/services/supabase/validate` - Validate Supabase connection
+- `POST /api/projects/:id/services/supabase/connect` - Connect Supabase
+- `POST /api/projects/:id/services/supabase/disconnect` - Disconnect Supabase
+- `POST /api/projects/:id/services/supabase/sync` - Sync Supabase assets
+- `POST /api/projects/:id/services/vercel/validate` - Validate Vercel connection
+- `POST /api/projects/:id/services/vercel/connect` - Connect Vercel
+- `POST /api/projects/:id/services/vercel/disconnect` - Disconnect Vercel
+- `POST /api/projects/:id/services/vercel/sync` - Sync Vercel assets
+
 ## Security
 
 - **RLS**: All database tables use Row Level Security
-- **Encryption**: GitHub tokens are encrypted at rest using AES-GCM (libsodium)
+- **Encryption**: All service tokens (GitHub, Supabase, Vercel) are encrypted at rest using AES-GCM (libsodium)
 - **Authentication**: Supabase Auth with email/password and GitHub OAuth
+- **Role-based Access**: Only project owners and maintainers can connect/disconnect services
+- **Secret Redaction**: Service tokens are never exposed to the browser after initial entry and are redacted from logs
 
 ## Environment Variables Reference
 

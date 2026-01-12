@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { SELECT_SENTINELS, taskSelect } from '@laneshare/shared'
 
 interface Thread {
   id: string
@@ -88,7 +89,7 @@ export function ChatInterface({
   const [activeThread, setActiveThread] = useState<Thread | null>(initialThread)
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState('')
-  const [selectedTaskId, setSelectedTaskId] = useState(initialTask?.id || '')
+  const [selectedTaskId, setSelectedTaskId] = useState(taskSelect.encode(initialTask?.id))
   const [isLoading, setIsLoading] = useState(false)
   const [isCreatingThread, setIsCreatingThread] = useState(false)
   const [copiedBlock, setCopiedBlock] = useState<string | null>(null)

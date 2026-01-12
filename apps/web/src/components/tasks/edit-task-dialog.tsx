@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { Loader2 } from 'lucide-react'
+import { SELECT_SENTINELS, assigneeSelect } from '@laneshare/shared'
 
 interface Task {
   id: string
@@ -63,7 +64,7 @@ export function EditTaskDialog({
   const [description, setDescription] = useState(task.description || '')
   const [status, setStatus] = useState(task.status)
   const [priority, setPriority] = useState(task.priority)
-  const [assigneeId, setAssigneeId] = useState(task.assignee_id || '')
+  const [assigneeId, setAssigneeId] = useState(assigneeSelect.encode(task.assignee_id))
 
   useEffect(() => {
     if (open) {
@@ -71,7 +72,7 @@ export function EditTaskDialog({
       setDescription(task.description || '')
       setStatus(task.status)
       setPriority(task.priority)
-      setAssigneeId(task.assignee_id || '')
+      setAssigneeId(assigneeSelect.encode(task.assignee_id))
     }
   }, [open, task])
 
@@ -90,7 +91,7 @@ export function EditTaskDialog({
           description: description.trim() || null,
           status,
           priority,
-          assignee_id: assigneeId || null,
+          assignee_id: assigneeSelect.decode(assigneeId),
         }),
       })
 
@@ -186,7 +187,7 @@ export function EditTaskDialog({
                   <SelectValue placeholder="Unassigned" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Unassigned</SelectItem>
+                  <SelectItem value={SELECT_SENTINELS.UNASSIGNED}>Unassigned</SelectItem>
                   {members.map((member) => (
                     <SelectItem key={member.id} value={member.id}>
                       {member.full_name || member.email}

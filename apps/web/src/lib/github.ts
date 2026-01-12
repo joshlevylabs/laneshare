@@ -26,6 +26,38 @@ export interface GitHubFile {
   size: number
 }
 
+export interface GitHubBranch {
+  name: string
+  commit: {
+    sha: string
+    url: string
+  }
+  protected: boolean
+}
+
+export interface GitHubCommit {
+  sha: string
+  commit: {
+    message: string
+    author: {
+      name: string
+      email: string
+      date: string
+    }
+  }
+}
+
+export interface GitHubWebhook {
+  id: number
+  name: string
+  active: boolean
+  events: string[]
+  config: {
+    url: string
+    content_type: string
+  }
+}
+
 export class GitHubClient {
   private token: string
   private baseUrl = 'https://api.github.com'
@@ -107,5 +139,50 @@ export class GitHubClient {
       return Buffer.from(content, 'base64').toString('utf-8')
     }
     return content
+  }
+
+  async listBranches(owner: string, repo: string): Promise<GitHubBranch[]> {
+    return this.request(`/repos/${owner}/${repo}/branches`)
+  }
+
+  async getLatestCommit(owner: string, repo: string, branch: string): Promise<GitHubCommit> {
+    return this.request(`/repos/${owner}/${repo}/commits/${branch}`)
+  }
+
+  async createWebhook(
+    owner: string,
+    repo: string,
+    webhookUrl: string,
+    secret: string,
+    events: string[] = ['push']
+  ): Promise<GitHubWebhook> {
+    return this.request(`/repos/${owner}/${repo}/hooks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'web',
+        active: true,
+        events,
+        config: {
+          url: webhookUrl,
+          content_type: 'json',
+          secret,
+          insecure_ssl: '0',
+        },
+      }),
+    })
+  }
+
+  async deleteWebhook(owner: string, repo: string, hookId: number): Promise<void> {
+    await fetch(`${this.baseUrl}/repos/${owner}/${repo}/hooks/${hookId}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    })
   }
 }

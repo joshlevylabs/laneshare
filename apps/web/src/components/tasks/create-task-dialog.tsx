@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { Loader2, Plus } from 'lucide-react'
+import { SELECT_SENTINELS, assigneeSelect, repoSelect } from '@laneshare/shared'
 
 interface Member {
   id: string
@@ -53,8 +54,8 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
   const [description, setDescription] = useState('')
   const [status, setStatus] = useState<string>('TODO')
   const [priority, setPriority] = useState<string>('MEDIUM')
-  const [assigneeId, setAssigneeId] = useState<string>('')
-  const [repoScope, setRepoScope] = useState<string[]>([])
+  const [assigneeId, setAssigneeId] = useState<string>(SELECT_SENTINELS.UNASSIGNED)
+  const [repoScope, setRepoScope] = useState<string>(SELECT_SENTINELS.ALL)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -63,6 +64,9 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
     setIsLoading(true)
 
     try {
+      const decodedAssignee = assigneeSelect.decode(assigneeId)
+      const decodedRepo = repoSelect.decode(repoScope)
+
       const response = await fetch(`/api/projects/${projectId}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -71,8 +75,8 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
           description: description.trim() || null,
           status,
           priority,
-          assignee_id: assigneeId || null,
-          repo_scope: repoScope.length > 0 ? repoScope : null,
+          assignee_id: decodedAssignee,
+          repo_scope: decodedRepo ? [decodedRepo] : null,
         }),
       })
 
@@ -105,8 +109,8 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
     setDescription('')
     setStatus('TODO')
     setPriority('MEDIUM')
-    setAssigneeId('')
-    setRepoScope([])
+    setAssigneeId(SELECT_SENTINELS.UNASSIGNED)
+    setRepoScope(SELECT_SENTINELS.ALL)
   }
 
   return (
@@ -188,7 +192,7 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
                   <SelectValue placeholder="Unassigned" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Unassigned</SelectItem>
+                  <SelectItem value={SELECT_SENTINELS.UNASSIGNED}>Unassigned</SelectItem>
                   {members.map((member) => (
                     <SelectItem key={member.id} value={member.id}>
                       {member.full_name || member.email}
@@ -201,15 +205,12 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
             {repos.length > 0 && (
               <div className="space-y-2">
                 <Label>Repository Scope (optional)</Label>
-                <Select
-                  value={repoScope[0] || ''}
-                  onValueChange={(v) => setRepoScope(v ? [v] : [])}
-                >
+                <Select value={repoScope} onValueChange={setRepoScope}>
                   <SelectTrigger>
                     <SelectValue placeholder="All repositories" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All repositories</SelectItem>
+                    <SelectItem value={SELECT_SENTINELS.ALL}>All repositories</SelectItem>
                     {repos.map((repo) => (
                       <SelectItem key={repo.id} value={`${repo.owner}/${repo.name}`}>
                         {repo.owner}/{repo.name}

@@ -5,7 +5,7 @@ export interface LanePilotContext {
   projectName: string
   repos: Repo[]
   relevantChunks: SearchResult[]
-  relevantDocs: DocPage[]
+  relevantDocs: Pick<DocPage, 'slug' | 'title' | 'markdown'>[]
   chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>
   userMessage: string
 }

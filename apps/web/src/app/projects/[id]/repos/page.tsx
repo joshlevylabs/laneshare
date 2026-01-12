@@ -15,12 +15,18 @@ export default async function ReposPage({
     data: { user },
   } = await supabase.auth.getUser()
 
-  // Check if user has GitHub connection
+  // Check if user logged in via GitHub OAuth
+  const isGitHubOAuthUser = user?.app_metadata?.provider === 'github'
+
+  // Check if user has GitHub connection (PAT)
   const { data: connection } = await supabase
     .from('github_connections')
     .select('id')
     .eq('user_id', user?.id)
     .single()
+
+  // User is connected if they logged in via GitHub OAuth OR have a stored PAT
+  const hasGitHubAccess = isGitHubOAuthUser || !!connection
 
   // Fetch repos
   const { data: repos } = await supabase
@@ -38,12 +44,12 @@ export default async function ReposPage({
             Connect and sync GitHub repositories to enable code search and context generation
           </p>
         </div>
-        {connection ? (
+        {hasGitHubAccess ? (
           <AddRepoDialog projectId={params.id} />
         ) : null}
       </div>
 
-      {!connection ? (
+      {!hasGitHubAccess ? (
         <Card>
           <CardHeader>
             <CardTitle>Connect GitHub</CardTitle>

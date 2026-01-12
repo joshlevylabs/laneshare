@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -38,15 +38,17 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const supabase = createServerSupabaseClient()
-
+  // Use regular client to verify authentication
+  const authClient = createServerSupabaseClient()
   const {
     data: { user },
-  } = await supabase.auth.getUser()
+  } = await authClient.auth.getUser()
 
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  console.log('Creating project for user:', user.id, user.email)
 
   const body = await request.json()
   const result = createProjectSchema.safeParse(body)
@@ -60,6 +62,24 @@ export async function POST(request: Request) {
 
   const { name, description } = result.data
 
+  // Use service role client for database operations (bypasses RLS)
+  const supabase = createServiceRoleClient()
+
+  // Check if profile exists
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('id', user.id)
+    .single()
+
+  if (profileError || !profile) {
+    console.error('Profile not found for user:', user.id, profileError)
+    return NextResponse.json(
+      { error: 'Profile not found. Please try logging out and back in.' },
+      { status: 400 }
+    )
+  }
+
   // Create project
   const { data: project, error: projectError } = await supabase
     .from('projects')
@@ -72,6 +92,7 @@ export async function POST(request: Request) {
     .single()
 
   if (projectError) {
+    console.error('Project creation error:', projectError)
     return NextResponse.json({ error: projectError.message }, { status: 500 })
   }
 

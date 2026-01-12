@@ -13,34 +13,46 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Get user's GitHub connection
-  const { data: connection, error } = await supabase
+  // Try to get token from github_connections (both OAuth and PAT tokens are stored here)
+  const { data: connection } = await supabase
     .from('github_connections')
     .select('access_token_encrypted')
     .eq('user_id', user.id)
     .single()
 
-  if (error || !connection) {
-    return NextResponse.json(
-      { error: 'GitHub not connected. Please connect your GitHub account first.' },
-      { status: 400 }
-    )
+  if (connection?.access_token_encrypted) {
+    try {
+      const github = await GitHubClient.fromEncryptedToken(connection.access_token_encrypted)
+      const repos = await github.listRepos({
+        visibility: 'all',
+        sort: 'pushed',
+        per_page: 100,
+      })
+      return NextResponse.json(repos)
+    } catch (err) {
+      console.error('Failed to use stored token:', err)
+    }
   }
 
-  try {
-    const github = await GitHubClient.fromEncryptedToken(connection.access_token_encrypted)
-    const repos = await github.listRepos({
-      visibility: 'all',
-      sort: 'pushed',
-      per_page: 100,
-    })
+  // Fallback: try to get provider token from current session (for users who logged in before token storage was implemented)
+  const { data: { session } } = await supabase.auth.getSession()
 
-    return NextResponse.json(repos)
-  } catch (error) {
-    console.error('Failed to fetch GitHub repos:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch repositories from GitHub' },
-      { status: 500 }
-    )
+  if (session?.provider_token && user.app_metadata?.provider === 'github') {
+    try {
+      const github = new GitHubClient(session.provider_token)
+      const repos = await github.listRepos({
+        visibility: 'all',
+        sort: 'pushed',
+        per_page: 100,
+      })
+      return NextResponse.json(repos)
+    } catch (error) {
+      console.error('Failed to use session provider token:', error)
+    }
   }
+
+  return NextResponse.json(
+    { error: 'GitHub not connected. Please connect your GitHub account first.' },
+    { status: 400 }
+  )
 }

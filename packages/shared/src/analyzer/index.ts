@@ -21,6 +21,7 @@ import { analyzeRoutes } from './passes/routes'
 import { analyzeEndpoints } from './passes/endpoints'
 import { analyzeSupabase } from './passes/supabase'
 import { analyzeDeployment } from './passes/deployment'
+import { analyzePython } from './passes/python'
 import { extractFeatures } from './passes/features'
 import { computeFingerprint } from './utils/fingerprint'
 
@@ -70,7 +71,11 @@ export async function analyzeArchitecture(
   const deploymentResult = await analyzeDeployment(context)
   mergeResults(allNodes, allEdges, allEvidence, deploymentResult)
 
-  // Pass 6: Feature Extraction
+  // Pass 6: Python Projects (FastAPI, Django, Flask)
+  const pythonResult = await analyzePython(context)
+  mergeResults(allNodes, allEdges, allEvidence, pythonResult)
+
+  // Pass 7: Feature Extraction
   const features = extractFeatures(allNodes, allEdges, allEvidence, context)
 
   // Filter by confidence if requested

@@ -4,13 +4,19 @@ import { z } from 'zod'
 
 const updateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
-  description: z.string().max(2000).nullable().optional(),
-  status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE']).optional(),
+  description: z.string().max(10000).nullable().optional(),
+  type: z.enum(['EPIC', 'STORY', 'TASK', 'BUG', 'SPIKE']).optional(),
+  status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'DONE']).optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).optional(),
+  labels: z.array(z.string()).optional(),
+  story_points: z.number().int().min(0).max(100).nullable().optional(),
   assignee_id: z.string().uuid().nullable().optional(),
+  parent_task_id: z.string().uuid().nullable().optional(),
   repo_scope: z.array(z.string()).nullable().optional(),
   sprint_id: z.string().uuid().nullable().optional(),
-  position: z.number().optional(),
+  due_date: z.string().nullable().optional(),
+  start_date: z.string().nullable().optional(),
+  rank: z.number().optional(),
 })
 
 export async function GET(
@@ -29,7 +35,12 @@ export async function GET(
 
   const { data: task, error } = await supabase
     .from('tasks')
-    .select('*, profiles:assignee_id(id, email, full_name)')
+    .select(`
+      *,
+      assignee:profiles!assignee_id(id, email, full_name, avatar_url),
+      reporter:profiles!reporter_id(id, email, full_name, avatar_url),
+      sprint:sprints!sprint_id(id, name, status)
+    `)
     .eq('id', params.taskId)
     .eq('project_id', params.id)
     .single()
@@ -38,7 +49,17 @@ export async function GET(
     return NextResponse.json({ error: 'Task not found' }, { status: 404 })
   }
 
-  return NextResponse.json(task)
+  // Get subtasks if this is a parent task
+  const { data: subtasks } = await supabase
+    .from('tasks')
+    .select(`
+      *,
+      assignee:profiles!assignee_id(id, email, full_name, avatar_url)
+    `)
+    .eq('parent_task_id', params.taskId)
+    .order('rank', { ascending: true })
+
+  return NextResponse.json({ ...task, subtasks: subtasks || [] })
 }
 
 export async function PATCH(
@@ -82,7 +103,12 @@ export async function PATCH(
     .update(result.data)
     .eq('id', params.taskId)
     .eq('project_id', params.id)
-    .select()
+    .select(`
+      *,
+      assignee:profiles!assignee_id(id, email, full_name, avatar_url),
+      reporter:profiles!reporter_id(id, email, full_name, avatar_url),
+      sprint:sprints!sprint_id(id, name, status)
+    `)
     .single()
 
   if (error) {

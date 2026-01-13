@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useCallback, useState } from 'react'
+import { useMemo, useCallback, useState, useEffect } from 'react'
 import ReactFlow, {
   Node,
   Edge,
@@ -9,20 +9,15 @@ import ReactFlow, {
   Background,
   useNodesState,
   useEdgesState,
-  Position,
   MarkerType,
   Panel,
+  ConnectionLineType,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Search,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
   GitBranch,
   Monitor,
   Server,
@@ -32,8 +27,9 @@ import {
   HardDrive,
   Package,
   Box,
+  Layers,
 } from 'lucide-react'
-import type { ArchitectureGraph, ArchNode, NodeType } from '@laneshare/shared'
+import type { ArchitectureGraph, ArchNode, NodeType, ArchEdge } from '@laneshare/shared'
 
 interface SystemMapTabProps {
   graph: ArchitectureGraph
@@ -47,7 +43,7 @@ const nodeConfig: Record<NodeType, { icon: typeof GitBranch; color: string; bgCo
   app: { icon: Box, color: '#8b5cf6', bgColor: '#f5f3ff' },
   screen: { icon: Monitor, color: '#3b82f6', bgColor: '#eff6ff' },
   endpoint: { icon: Server, color: '#10b981', bgColor: '#ecfdf5' },
-  worker: { icon: Server, color: '#f59e0b', bgColor: '#fffbeb' },
+  worker: { icon: Layers, color: '#f59e0b', bgColor: '#fffbeb' },
   table: { icon: Database, color: '#ef4444', bgColor: '#fef2f2' },
   function: { icon: Database, color: '#f97316', bgColor: '#fff7ed' },
   storage: { icon: HardDrive, color: '#14b8a6', bgColor: '#f0fdfa' },
@@ -58,13 +54,13 @@ const nodeConfig: Record<NodeType, { icon: typeof GitBranch; color: string; bgCo
 }
 
 // Custom node component
-function ArchNode({ data }: { data: { node: ArchNode; onClick: () => void } }) {
+function ArchNodeComponent({ data }: { data: { node: ArchNode; onClick: () => void } }) {
   const config = nodeConfig[data.node.type]
   const Icon = config.icon
 
   return (
     <div
-      className="px-3 py-2 rounded-lg border-2 shadow-sm cursor-pointer hover:shadow-md transition-shadow min-w-[120px]"
+      className="px-3 py-2 rounded-lg border-2 shadow-sm cursor-pointer hover:shadow-md transition-shadow min-w-[100px] max-w-[180px]"
       style={{
         backgroundColor: config.bgColor,
         borderColor: config.color,
@@ -72,8 +68,8 @@ function ArchNode({ data }: { data: { node: ArchNode; onClick: () => void } }) {
       onClick={data.onClick}
     >
       <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4" style={{ color: config.color }} />
-        <span className="text-sm font-medium truncate max-w-[150px]" title={data.node.label}>
+        <Icon className="h-4 w-4 flex-shrink-0" style={{ color: config.color }} />
+        <span className="text-sm font-medium truncate" title={data.node.label}>
           {data.node.label}
         </span>
       </div>
@@ -85,15 +81,208 @@ function ArchNode({ data }: { data: { node: ArchNode; onClick: () => void } }) {
 }
 
 const nodeTypes = {
-  archNode: ArchNode,
+  archNode: ArchNodeComponent,
+}
+
+// Hierarchical layout algorithm
+function computeHierarchicalLayout(
+  nodes: ArchNode[],
+  edges: ArchEdge[],
+  onNodeClick: (nodeId: string, label: string) => void
+): { nodes: Node[]; edges: Edge[] } {
+  if (nodes.length === 0) {
+    return { nodes: [], edges: [] }
+  }
+
+  // Build adjacency maps for hierarchy
+  const childrenMap = new Map<string, string[]>() // parent -> children
+  const parentMap = new Map<string, string>() // child -> parent
+
+  // Build parent-child relationships from "contains" edges
+  for (const edge of edges) {
+    if (edge.type === 'contains') {
+      if (!childrenMap.has(edge.source)) {
+        childrenMap.set(edge.source, [])
+      }
+      childrenMap.get(edge.source)!.push(edge.target)
+      parentMap.set(edge.target, edge.source)
+    }
+  }
+
+  // Find root nodes (nodes with no parent)
+  const nodeIds = new Set(nodes.map(n => n.id))
+  const rootNodes = nodes.filter(n => !parentMap.has(n.id))
+
+  // Calculate depth for each node using BFS
+  const depthMap = new Map<string, number>()
+  const queue: { id: string; depth: number }[] = []
+
+  // Start with root nodes at depth 0
+  for (const root of rootNodes) {
+    queue.push({ id: root.id, depth: 0 })
+    depthMap.set(root.id, 0)
+  }
+
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!
+    const children = childrenMap.get(id) || []
+    for (const childId of children) {
+      if (!depthMap.has(childId) && nodeIds.has(childId)) {
+        depthMap.set(childId, depth + 1)
+        queue.push({ id: childId, depth: depth + 1 })
+      }
+    }
+  }
+
+  // Assign depth based on node type for nodes without parent
+  const typeDepth: Record<NodeType, number> = {
+    deployment: 0,
+    repo: 1,
+    app: 2,
+    screen: 3,
+    endpoint: 3,
+    worker: 3,
+    table: 4,
+    function: 4,
+    storage: 4,
+    auth: 4,
+    external_service: 5,
+    package: 5,
+  }
+
+  for (const node of nodes) {
+    if (!depthMap.has(node.id)) {
+      depthMap.set(node.id, typeDepth[node.type] || 2)
+    }
+  }
+
+  // Group nodes by depth and parent
+  const nodesByDepth = new Map<number, ArchNode[]>()
+  for (const node of nodes) {
+    const depth = depthMap.get(node.id) || 0
+    if (!nodesByDepth.has(depth)) {
+      nodesByDepth.set(depth, [])
+    }
+    nodesByDepth.get(depth)!.push(node)
+  }
+
+  // Sort depths
+  const depths = Array.from(nodesByDepth.keys()).sort((a, b) => a - b)
+
+  // Layout parameters
+  const xSpacing = 200
+  const ySpacing = 150
+  const startX = 50
+  const startY = 50
+
+  // Position nodes
+  const positionedNodes: Node[] = []
+  const nodePositions = new Map<string, { x: number; y: number }>()
+
+  for (const depth of depths) {
+    const depthNodes = nodesByDepth.get(depth) || []
+
+    // Group by parent for better organization
+    const byParent = new Map<string | undefined, ArchNode[]>()
+    for (const node of depthNodes) {
+      const parent = parentMap.get(node.id)
+      if (!byParent.has(parent)) {
+        byParent.set(parent, [])
+      }
+      byParent.get(parent)!.push(node)
+    }
+
+    // Calculate positions for each parent group
+    let currentX = startX
+    const y = startY + depth * ySpacing
+
+    for (const [parentId, groupNodes] of Array.from(byParent.entries())) {
+      // Sort nodes by label within group
+      groupNodes.sort((a, b) => a.label.localeCompare(b.label))
+
+      // If there's a parent, try to center children under it
+      if (parentId && nodePositions.has(parentId)) {
+        const parentPos = nodePositions.get(parentId)!
+        const groupWidth = (groupNodes.length - 1) * xSpacing
+        currentX = Math.max(currentX, parentPos.x - groupWidth / 2)
+      }
+
+      for (const node of groupNodes) {
+        const position = { x: currentX, y }
+        nodePositions.set(node.id, position)
+
+        positionedNodes.push({
+          id: node.id,
+          type: 'archNode',
+          position,
+          data: {
+            node,
+            onClick: () => onNodeClick(node.id, node.label),
+          },
+        })
+
+        currentX += xSpacing
+      }
+
+      // Add some extra spacing between groups
+      currentX += xSpacing / 2
+    }
+  }
+
+  // Create edges with proper styling
+  const positionedEdges: Edge[] = edges
+    .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
+    .map(edge => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: 'smoothstep',
+      animated: edge.type === 'calls' || edge.type === 'calls_external',
+      style: {
+        stroke: getEdgeColor(edge.type, edge.confidence),
+        strokeWidth: edge.type === 'contains' ? 1 : 2,
+        opacity: edge.confidence === 'low' ? 0.4 : 0.8,
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: getEdgeColor(edge.type, edge.confidence),
+        width: 15,
+        height: 15,
+      },
+      label: edge.type !== 'contains' ? edge.label || edge.type : undefined,
+      labelStyle: { fontSize: 10, fill: '#666' },
+      labelBgStyle: { fill: 'white', fillOpacity: 0.8 },
+      data: { edge },
+    }))
+
+  return { nodes: positionedNodes, edges: positionedEdges }
+}
+
+function getEdgeColor(type: string, confidence: string): string {
+  // Color by edge type
+  switch (type) {
+    case 'contains':
+      return '#cbd5e1' // slate-300
+    case 'calls':
+    case 'calls_external':
+      return '#3b82f6' // blue-500
+    case 'reads':
+      return '#10b981' // green-500
+    case 'writes':
+      return '#f59e0b' // amber-500
+    case 'depends_on':
+      return '#8b5cf6' // violet-500
+    default:
+      return confidence === 'high' ? '#10b981' : confidence === 'medium' ? '#f59e0b' : '#9ca3af'
+  }
 }
 
 export function SystemMapTab({ graph, onNodeClick, onEdgeClick }: SystemMapTabProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedTypes, setSelectedTypes] = useState<Set<NodeType>>(new Set())
 
-  // Convert graph to React Flow format
-  const { initialNodes, initialEdges } = useMemo(() => {
+  // Filter and compute layout
+  const { layoutNodes, layoutEdges } = useMemo(() => {
     // Filter nodes by search and type
     const filteredNodes = graph.nodes.filter((node) => {
       if (searchQuery && !node.label.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -105,95 +294,26 @@ export function SystemMapTab({ graph, onNodeClick, onEdgeClick }: SystemMapTabPr
       return true
     })
 
-    const filteredNodeIds = new Set(filteredNodes.map((n) => n.id))
+    const filteredNodeIds = new Set(filteredNodes.map(n => n.id))
 
-    // Auto-layout nodes in a hierarchical manner
-    const typeOrder: NodeType[] = [
-      'deployment',
-      'repo',
-      'app',
-      'screen',
-      'endpoint',
-      'table',
-      'function',
-      'auth',
-      'storage',
-      'external_service',
-      'package',
-      'worker',
-    ]
+    // Filter edges to only those connecting filtered nodes
+    const filteredEdges = graph.edges.filter(
+      edge => filteredNodeIds.has(edge.source) && filteredNodeIds.has(edge.target)
+    )
 
-    const nodesByType = new Map<NodeType, ArchNode[]>()
-    for (const node of filteredNodes) {
-      if (!nodesByType.has(node.type)) {
-        nodesByType.set(node.type, [])
-      }
-      nodesByType.get(node.type)!.push(node)
-    }
+    const layout = computeHierarchicalLayout(filteredNodes, filteredEdges, onNodeClick)
+    return { layoutNodes: layout.nodes, layoutEdges: layout.edges }
+  }, [graph.nodes, graph.edges, searchQuery, selectedTypes, onNodeClick])
 
-    const nodes: Node[] = []
-    let currentY = 0
-    const xSpacing = 220
-    const ySpacing = 120
+  // Use React Flow state hooks
+  const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(layoutEdges)
 
-    for (const type of typeOrder) {
-      const typeNodes = nodesByType.get(type) || []
-      if (typeNodes.length === 0) continue
-
-      let currentX = 0
-      const maxPerRow = 5
-      let rowCount = 0
-
-      for (let i = 0; i < typeNodes.length; i++) {
-        const archNode = typeNodes[i]
-        nodes.push({
-          id: archNode.id,
-          type: 'archNode',
-          position: { x: currentX, y: currentY + (rowCount * ySpacing) },
-          data: {
-            node: archNode,
-            onClick: () => onNodeClick(archNode.id, archNode.label),
-          },
-        })
-
-        currentX += xSpacing
-        if ((i + 1) % maxPerRow === 0) {
-          currentX = 0
-          rowCount++
-        }
-      }
-
-      currentY += (rowCount + 1) * ySpacing + 40
-    }
-
-    // Create edges
-    const edges: Edge[] = graph.edges
-      .filter((edge) => filteredNodeIds.has(edge.source) && filteredNodeIds.has(edge.target))
-      .map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        type: 'smoothstep',
-        animated: edge.type === 'calls' || edge.type === 'calls_external',
-        style: {
-          stroke: getEdgeColor(edge.confidence),
-          strokeWidth: edge.confidence === 'high' ? 2 : 1,
-          opacity: edge.confidence === 'low' ? 0.5 : 1,
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: getEdgeColor(edge.confidence),
-        },
-        label: edge.label,
-        labelStyle: { fontSize: 10 },
-        data: { edge },
-      }))
-
-    return { initialNodes: nodes, initialEdges: edges }
-  }, [graph, searchQuery, selectedTypes, onNodeClick])
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+  // Sync state when layout changes (important!)
+  useEffect(() => {
+    setNodes(layoutNodes)
+    setEdges(layoutEdges)
+  }, [layoutNodes, layoutEdges, setNodes, setEdges])
 
   const onEdgeClickHandler = useCallback(
     (_: React.MouseEvent, edge: Edge) => {
@@ -223,8 +343,21 @@ export function SystemMapTab({ graph, onNodeClick, onEdgeClick }: SystemMapTabPr
     return Array.from(types)
   }, [graph.nodes])
 
+  // Edge stats for display
+  const edgeStats = useMemo(() => {
+    const stats = { contains: 0, calls: 0, reads: 0, writes: 0, other: 0 }
+    for (const edge of graph.edges) {
+      if (edge.type === 'contains') stats.contains++
+      else if (edge.type === 'calls' || edge.type === 'calls_external') stats.calls++
+      else if (edge.type === 'reads') stats.reads++
+      else if (edge.type === 'writes') stats.writes++
+      else stats.other++
+    }
+    return stats
+  }, [graph.edges])
+
   return (
-    <div className="h-[600px] border rounded-lg overflow-hidden bg-background">
+    <div className="h-[700px] border rounded-lg overflow-hidden bg-background">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -232,20 +365,24 @@ export function SystemMapTab({ graph, onNodeClick, onEdgeClick }: SystemMapTabPr
         onEdgesChange={onEdgesChange}
         onEdgeClick={onEdgeClickHandler}
         nodeTypes={nodeTypes}
+        connectionLineType={ConnectionLineType.SmoothStep}
         fitView
+        fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}
         maxZoom={2}
-        defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+        defaultViewport={{ x: 0, y: 0, zoom: 0.5 }}
       >
         <Background color="#e5e7eb" gap={20} />
         <Controls />
         <MiniMap
           nodeColor={(node: Node) => nodeConfig[(node.data?.node as ArchNode)?.type]?.color || '#888'}
           maskColor="rgba(0, 0, 0, 0.1)"
+          pannable
+          zoomable
         />
 
         {/* Search and Filter Panel */}
-        <Panel position="top-left" className="bg-background/95 backdrop-blur-sm p-3 rounded-lg border shadow-sm">
+        <Panel position="top-left" className="bg-background/95 backdrop-blur-sm p-3 rounded-lg border shadow-sm max-w-[320px]">
           <div className="space-y-3">
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -253,7 +390,7 @@ export function SystemMapTab({ graph, onNodeClick, onEdgeClick }: SystemMapTabPr
                 placeholder="Search nodes..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 w-64"
+                className="pl-8"
               />
             </div>
 
@@ -285,36 +422,29 @@ export function SystemMapTab({ graph, onNodeClick, onEdgeClick }: SystemMapTabPr
 
         {/* Legend Panel */}
         <Panel position="bottom-right" className="bg-background/95 backdrop-blur-sm p-3 rounded-lg border shadow-sm">
-          <div className="text-xs space-y-1">
-            <div className="font-medium mb-2">Edge Confidence</div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-0.5" style={{ backgroundColor: getEdgeColor('high') }} />
-              <span>High</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-0.5" style={{ backgroundColor: getEdgeColor('medium') }} />
-              <span>Medium</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-0.5 opacity-50" style={{ backgroundColor: getEdgeColor('low') }} />
-              <span>Low</span>
+          <div className="text-xs space-y-2">
+            <div className="font-medium mb-2">Edge Types</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-0.5" style={{ backgroundColor: getEdgeColor('contains', 'high') }} />
+                <span>Contains ({edgeStats.contains})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-0.5" style={{ backgroundColor: getEdgeColor('calls', 'high') }} />
+                <span>Calls ({edgeStats.calls})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-0.5" style={{ backgroundColor: getEdgeColor('reads', 'high') }} />
+                <span>Reads ({edgeStats.reads})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-0.5" style={{ backgroundColor: getEdgeColor('writes', 'high') }} />
+                <span>Writes ({edgeStats.writes})</span>
+              </div>
             </div>
           </div>
         </Panel>
       </ReactFlow>
     </div>
   )
-}
-
-function getEdgeColor(confidence: string): string {
-  switch (confidence) {
-    case 'high':
-      return '#10b981'
-    case 'medium':
-      return '#f59e0b'
-    case 'low':
-      return '#9ca3af'
-    default:
-      return '#6b7280'
-  }
 }

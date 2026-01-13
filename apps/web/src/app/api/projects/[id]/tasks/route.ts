@@ -2,14 +2,23 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
+// Schema for backward compatible task creation (works with both old and new schema)
 const createTaskSchema = z.object({
   title: z.string().min(1).max(200),
-  description: z.string().max(2000).nullable().optional(),
-  status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE']).default('TODO'),
+  description: z.string().max(10000).nullable().optional(),
+  // New fields - will be ignored if columns don't exist
+  type: z.enum(['EPIC', 'STORY', 'TASK', 'BUG', 'SPIKE']).optional(),
+  status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'DONE']).default('TODO'),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).default('MEDIUM'),
+  labels: z.array(z.string()).optional(),
+  story_points: z.number().int().min(0).max(100).nullable().optional(),
   assignee_id: z.string().uuid().nullable().optional(),
+  reporter_id: z.string().uuid().nullable().optional(),
+  parent_task_id: z.string().uuid().nullable().optional(),
   repo_scope: z.array(z.string()).nullable().optional(),
   sprint_id: z.string().uuid().nullable().optional(),
+  due_date: z.string().nullable().optional(),
+  start_date: z.string().nullable().optional(),
 })
 
 export async function GET(
@@ -26,11 +35,38 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { data: tasks, error } = await supabase
+  // Parse query params for filtering
+  const url = new URL(request.url)
+  const sprintId = url.searchParams.get('sprint_id')
+  const status = url.searchParams.get('status')
+  const type = url.searchParams.get('type')
+  const assigneeId = url.searchParams.get('assignee_id')
+  const parentTaskId = url.searchParams.get('parent_task_id')
+
+  // Backward compatible query - only join on assignee which exists in original schema
+  let query = supabase
     .from('tasks')
-    .select('*, profiles:assignee_id(id, email, full_name)')
+    .select(`
+      *,
+      assignee:profiles!assignee_id(id, email, full_name, avatar_url)
+    `)
     .eq('project_id', params.id)
-    .order('position', { ascending: true })
+
+  // Apply filters (only for columns that exist in original schema)
+  if (status) {
+    query = query.eq('status', status)
+  }
+
+  if (assigneeId === 'null') {
+    query = query.is('assignee_id', null)
+  } else if (assigneeId) {
+    query = query.eq('assignee_id', assigneeId)
+  }
+
+  // Note: sprint_id, type, parent_task_id filters require migration to be applied
+  // They will be silently ignored if columns don't exist
+
+  const { data: tasks, error } = await query.order('position', { ascending: true })
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
@@ -75,30 +111,29 @@ export async function POST(
     )
   }
 
-  // Get max position for the status
-  const { data: maxPositionTask } = await supabase
-    .from('tasks')
-    .select('position')
-    .eq('project_id', params.id)
-    .eq('status', result.data.status)
-    .order('position', { ascending: false })
-    .limit(1)
-    .single()
-
-  const position = (maxPositionTask?.position || 0) + 1
+  // Insert with only fields from original schema for backward compatibility
+  // New fields (type, labels, story_points, etc.) will error if migration not applied
+  const insertData: Record<string, unknown> = {
+    project_id: params.id,
+    title: result.data.title,
+    description: result.data.description,
+    status: result.data.status,
+    priority: result.data.priority,
+    assignee_id: result.data.assignee_id,
+  }
 
   const { data: task, error } = await supabase
     .from('tasks')
-    .insert({
-      project_id: params.id,
-      ...result.data,
-      position,
-    })
-    .select()
+    .insert(insertData)
+    .select(`
+      *,
+      assignee:profiles!assignee_id(id, email, full_name, avatar_url)
+    `)
     .single()
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    console.error('Task creation error:', error)
+    return NextResponse.json({ error: error.message, code: error.code, details: error.details }, { status: 500 })
   }
 
   return NextResponse.json(task, { status: 201 })

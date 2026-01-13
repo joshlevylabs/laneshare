@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { GitHubClient } from '@/lib/github'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -6,6 +7,8 @@ const addRepoSchema = z.object({
   owner: z.string().min(1),
   name: z.string().min(1),
   defaultBranch: z.string().default('main'),
+  selectedBranch: z.string().optional(),
+  autoSyncEnabled: z.boolean().default(false),
 })
 
 export async function GET(
@@ -74,9 +77,9 @@ export async function POST(
     )
   }
 
-  const { owner, name, defaultBranch } = result.data
+  const { owner, name, defaultBranch, selectedBranch, autoSyncEnabled } = result.data
 
-  // Check if repo already exists
+  // Check if repo already exists (with same branch)
   const { data: existing } = await supabase
     .from('repos')
     .select('id')
@@ -92,6 +95,39 @@ export async function POST(
     )
   }
 
+  // Get user's GitHub connection for webhook registration
+  const { data: connection } = await supabase
+    .from('github_connections')
+    .select('access_token_encrypted')
+    .eq('user_id', user.id)
+    .single()
+
+  let webhookId: number | null = null
+
+  // Register webhook if auto-sync is enabled
+  if (autoSyncEnabled && connection?.access_token_encrypted) {
+    const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL
+
+    if (webhookSecret && appUrl) {
+      try {
+        const github = await GitHubClient.fromEncryptedToken(connection.access_token_encrypted)
+        const webhook = await github.createWebhook(
+          owner,
+          name,
+          `${appUrl}/api/webhooks/github`,
+          webhookSecret,
+          ['push']
+        )
+        webhookId = webhook.id
+        console.log(`[Webhook] Created webhook ${webhookId} for ${owner}/${name}`)
+      } catch (webhookError) {
+        console.error('[Webhook] Failed to create webhook:', webhookError)
+        // Continue without webhook - user can still manually sync
+      }
+    }
+  }
+
   // Add the repo
   const { data: repo, error } = await supabase
     .from('repos')
@@ -101,6 +137,9 @@ export async function POST(
       owner,
       name,
       default_branch: defaultBranch,
+      selected_branch: selectedBranch || defaultBranch,
+      auto_sync_enabled: autoSyncEnabled,
+      webhook_id: webhookId,
       status: 'PENDING',
     })
     .select()

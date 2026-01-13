@@ -186,7 +186,12 @@ Connect external services to automatically sync infrastructure metadata and gene
 2. Click "Connect Supabase"
 3. Enter your Supabase project URL and Service Role Key
 4. Click "Test & Connect"
-5. Assets synced:
+5. **Important:** For full schema introspection, run the setup SQL in your connected Supabase project:
+   - Copy the contents of `apps/web/public/laneshare-introspection-setup.sql`
+   - Run it in your connected project's SQL Editor (not LaneShare's database)
+   - This creates views that expose schema metadata securely to the service role
+6. Click "Sync Now" to discover assets
+7. Assets synced:
    - Database tables and columns
    - RLS policies
    - Functions and triggers

@@ -38,6 +38,7 @@ export interface SyncResult {
   assets: DiscoveredAsset[]
   stats: ServiceSyncStats
   error?: string
+  warnings?: string[]
 }
 
 /**

@@ -8,7 +8,9 @@ import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
 import { formatRelativeTime } from '@laneshare/shared'
 import { Progress } from '@/components/ui/progress'
-import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink } from 'lucide-react'
+import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink, Bell, BellOff } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +28,7 @@ interface Repo {
   owner: string
   name: string
   default_branch: string
+  selected_branch: string | null
   status: 'PENDING' | 'SYNCING' | 'SYNCED' | 'ERROR'
   last_synced_at: string | null
   sync_error: string | null
@@ -33,6 +36,10 @@ interface Repo {
   sync_progress: number | null
   sync_total: number | null
   sync_stage: 'discovering' | 'indexing' | 'embedding' | 'generating_docs' | null
+  has_updates: boolean
+  auto_sync_enabled: boolean
+  last_synced_commit_sha: string | null
+  latest_commit_sha: string | null
 }
 
 interface ReposListProps {
@@ -51,6 +58,7 @@ export function ReposList({ repos, projectId }: ReposListProps) {
   const router = useRouter()
   const [syncingRepos, setSyncingRepos] = useState<Set<string>>(new Set())
   const [deletingRepos, setDeletingRepos] = useState<Set<string>>(new Set())
+  const [togglingAutoSync, setTogglingAutoSync] = useState<Set<string>>(new Set())
   const [repoProgress, setRepoProgress] = useState<Record<string, SyncProgress>>({})
 
   const getStageLabel = (stage: string | null): string => {
@@ -182,6 +190,44 @@ export function ReposList({ repos, projectId }: ReposListProps) {
     }
   }
 
+  const handleToggleAutoSync = async (repoId: string, currentValue: boolean) => {
+    setTogglingAutoSync((prev) => new Set(prev).add(repoId))
+
+    try {
+      const response = await fetch(`/api/repos/${repoId}/auto-sync`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoSyncEnabled: !currentValue }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.message || 'Failed to update auto-sync setting')
+      }
+
+      toast({
+        title: !currentValue ? 'Auto-sync Enabled' : 'Auto-sync Disabled',
+        description: !currentValue
+          ? 'Repository will automatically sync when new commits are pushed.'
+          : 'You will need to manually sync to get updates.',
+      })
+
+      router.refresh()
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to update auto-sync',
+      })
+    } finally {
+      setTogglingAutoSync((prev) => {
+        const next = new Set(prev)
+        next.delete(repoId)
+        return next
+      })
+    }
+  }
+
   if (repos.length === 0) {
     return (
       <Card className="border-dashed">
@@ -201,6 +247,8 @@ export function ReposList({ repos, projectId }: ReposListProps) {
       {repos.map((repo) => {
         const isSyncing = syncingRepos.has(repo.id) || repo.status === 'SYNCING'
         const isDeleting = deletingRepos.has(repo.id)
+        const isTogglingAutoSync = togglingAutoSync.has(repo.id)
+        const branch = repo.selected_branch || repo.default_branch
 
         return (
           <Card key={repo.id}>
@@ -221,23 +269,30 @@ export function ReposList({ repos, projectId }: ReposListProps) {
                       </a>
                     </CardTitle>
                     <CardDescription>
-                      Branch: {repo.default_branch} • Added {formatRelativeTime(repo.installed_at)}
+                      Branch: {branch} • Added {formatRelativeTime(repo.installed_at)}
                     </CardDescription>
                   </div>
                 </div>
-                <Badge
-                  variant={
-                    repo.status === 'SYNCED'
-                      ? 'success'
-                      : repo.status === 'ERROR'
-                      ? 'destructive'
-                      : repo.status === 'SYNCING'
-                      ? 'warning'
-                      : 'secondary'
-                  }
-                >
-                  {isSyncing ? 'Syncing...' : repo.status}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {repo.has_updates && !isSyncing && (
+                    <Badge variant="outline" className="border-blue-500 text-blue-500">
+                      Update available
+                    </Badge>
+                  )}
+                  <Badge
+                    variant={
+                      repo.status === 'SYNCED'
+                        ? 'success'
+                        : repo.status === 'ERROR'
+                        ? 'destructive'
+                        : repo.status === 'SYNCING'
+                        ? 'warning'
+                        : 'secondary'
+                    }
+                  >
+                    {isSyncing ? 'Syncing...' : repo.status}
+                  </Badge>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -263,15 +318,39 @@ export function ReposList({ repos, projectId }: ReposListProps) {
               )}
 
               <div className="flex items-center justify-between">
-                <div className="text-sm text-muted-foreground">
-                  {repo.last_synced_at ? (
-                    <>Last synced: {formatRelativeTime(repo.last_synced_at)}</>
-                  ) : (
-                    <>Not synced yet</>
-                  )}
-                  {repo.sync_error && (
-                    <span className="text-destructive ml-2">Error: {repo.sync_error}</span>
-                  )}
+                <div className="flex flex-col gap-1">
+                  <div className="text-sm text-muted-foreground">
+                    {repo.last_synced_at ? (
+                      <>Last synced: {formatRelativeTime(repo.last_synced_at)}</>
+                    ) : (
+                      <>Not synced yet</>
+                    )}
+                    {repo.sync_error && (
+                      <span className="text-destructive ml-2">Error: {repo.sync_error}</span>
+                    )}
+                  </div>
+                  {/* Auto-sync toggle */}
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id={`auto-sync-${repo.id}`}
+                      checked={repo.auto_sync_enabled}
+                      disabled={isTogglingAutoSync}
+                      onCheckedChange={() => handleToggleAutoSync(repo.id, repo.auto_sync_enabled)}
+                    />
+                    <Label
+                      htmlFor={`auto-sync-${repo.id}`}
+                      className="text-sm text-muted-foreground cursor-pointer flex items-center gap-1"
+                    >
+                      {isTogglingAutoSync ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : repo.auto_sync_enabled ? (
+                        <Bell className="h-3 w-3" />
+                      ) : (
+                        <BellOff className="h-3 w-3" />
+                      )}
+                      Auto-sync {repo.auto_sync_enabled ? 'enabled' : 'disabled'}
+                    </Label>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button

@@ -23,7 +23,7 @@ interface ServiceConnection {
   id: string
   service: string
   display_name: string
-  status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+  status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'WARNING'
   config_json: Record<string, unknown>
   last_synced_at: string | null
   last_sync_error: string | null
@@ -144,6 +144,13 @@ export function ServiceConnectionCard({
             Connected
           </Badge>
         )
+      case 'WARNING':
+        return (
+          <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+            <AlertCircle className="mr-1 h-3 w-3" />
+            Partial
+          </Badge>
+        )
       case 'ERROR':
         return (
           <Badge variant="destructive">
@@ -223,8 +230,13 @@ export function ServiceConnectionCard({
             )}
 
             {connection.last_sync_error && (
-              <div className="p-3 bg-destructive/10 text-destructive rounded-md text-sm">
-                <strong>Error:</strong> {connection.last_sync_error}
+              <div className={`p-3 rounded-md text-sm ${
+                connection.status === 'WARNING'
+                  ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200'
+                  : 'bg-destructive/10 text-destructive'
+              }`}>
+                <strong>{connection.status === 'WARNING' ? 'Warning:' : 'Error:'}</strong>{' '}
+                {connection.last_sync_error}
               </div>
             )}
 

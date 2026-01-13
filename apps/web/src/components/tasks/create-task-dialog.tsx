@@ -23,8 +23,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
-import { Loader2, Plus } from 'lucide-react'
-import { SELECT_SENTINELS, assigneeSelect, repoSelect } from '@laneshare/shared'
+import { Loader2, Plus, Bug, Zap, BookOpen, FlaskConical, CheckSquare } from 'lucide-react'
+import { SELECT_SENTINELS, assigneeSelect, sprintSelect } from '@laneshare/shared'
+import type { Task, Sprint, TaskType, TaskStatus, TaskPriority } from '@laneshare/shared'
 
 interface Member {
   id: string
@@ -42,9 +43,41 @@ interface CreateTaskDialogProps {
   projectId: string
   members: Member[]
   repos: Repo[]
+  sprints?: Sprint[]
+  onTaskCreated?: (task: Task) => void
 }
 
-export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialogProps) {
+const TYPE_OPTIONS: { value: TaskType; label: string; Icon: React.ElementType }[] = [
+  { value: 'TASK', label: 'Task', Icon: CheckSquare },
+  { value: 'BUG', label: 'Bug', Icon: Bug },
+  { value: 'STORY', label: 'Story', Icon: BookOpen },
+  { value: 'EPIC', label: 'Epic', Icon: Zap },
+  { value: 'SPIKE', label: 'Spike', Icon: FlaskConical },
+]
+
+const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
+  { value: 'BACKLOG', label: 'Backlog' },
+  { value: 'TODO', label: 'To Do' },
+  { value: 'IN_PROGRESS', label: 'In Progress' },
+  { value: 'IN_REVIEW', label: 'In Review' },
+  { value: 'BLOCKED', label: 'Blocked' },
+  { value: 'DONE', label: 'Done' },
+]
+
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
+  { value: 'LOW', label: 'Low' },
+  { value: 'MEDIUM', label: 'Medium' },
+  { value: 'HIGH', label: 'High' },
+  { value: 'URGENT', label: 'Urgent' },
+]
+
+export function CreateTaskDialog({
+  projectId,
+  members,
+  repos,
+  sprints = [],
+  onTaskCreated,
+}: CreateTaskDialogProps) {
   const { toast } = useToast()
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -52,10 +85,12 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [status, setStatus] = useState<string>('TODO')
-  const [priority, setPriority] = useState<string>('MEDIUM')
+  const [type, setType] = useState<TaskType>('TASK')
+  const [status, setStatus] = useState<TaskStatus>('TODO')
+  const [priority, setPriority] = useState<TaskPriority>('MEDIUM')
   const [assigneeId, setAssigneeId] = useState<string>(SELECT_SENTINELS.UNASSIGNED)
-  const [repoScope, setRepoScope] = useState<string>(SELECT_SENTINELS.ALL)
+  const [sprintId, setSprintId] = useState<string>(SELECT_SENTINELS.NO_SPRINT)
+  const [storyPoints, setStoryPoints] = useState<string>('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -64,19 +99,18 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
     setIsLoading(true)
 
     try {
-      const decodedAssignee = assigneeSelect.decode(assigneeId)
-      const decodedRepo = repoSelect.decode(repoScope)
-
       const response = await fetch(`/api/projects/${projectId}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || null,
+          type,
           status,
           priority,
-          assignee_id: decodedAssignee,
-          repo_scope: decodedRepo ? [decodedRepo] : null,
+          assignee_id: assigneeSelect.decode(assigneeId),
+          sprint_id: sprintSelect.decode(sprintId),
+          story_points: storyPoints ? parseInt(storyPoints, 10) : null,
         }),
       })
 
@@ -85,10 +119,16 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
         throw new Error(error.message || 'Failed to create task')
       }
 
+      const task = await response.json()
+
       toast({
         title: 'Task created',
-        description: `"${title}" has been added to the board.`,
+        description: `${task.key}: "${title}" has been added.`,
       })
+
+      if (onTaskCreated) {
+        onTaskCreated(task)
+      }
 
       setOpen(false)
       resetForm()
@@ -107,10 +147,12 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
   const resetForm = () => {
     setTitle('')
     setDescription('')
+    setType('TASK')
     setStatus('TODO')
     setPriority('MEDIUM')
     setAssigneeId(SELECT_SENTINELS.UNASSIGNED)
-    setRepoScope(SELECT_SENTINELS.ALL)
+    setSprintId(SELECT_SENTINELS.NO_SPRINT)
+    setStoryPoints('')
   }
 
   return (
@@ -121,12 +163,12 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
           New Task
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>Create Task</DialogTitle>
             <DialogDescription>
-              Add a new task to the project board.
+              Add a new task to the project.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -154,34 +196,68 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Status</Label>
-                <Select value={status} onValueChange={setStatus}>
+                <Label>Type</Label>
+                <Select value={type} onValueChange={(v) => setType(v as TaskType)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="BACKLOG">Backlog</SelectItem>
-                    <SelectItem value="TODO">To Do</SelectItem>
-                    <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
-                    <SelectItem value="BLOCKED">Blocked</SelectItem>
-                    <SelectItem value="DONE">Done</SelectItem>
+                    {TYPE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        <div className="flex items-center gap-2">
+                          <opt.Icon className="h-4 w-4" />
+                          {opt.label}
+                        </div>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <Label>Priority</Label>
-                <Select value={priority} onValueChange={setPriority}>
+                <Label>Status</Label>
+                <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="LOW">Low</SelectItem>
-                    <SelectItem value="MEDIUM">Medium</SelectItem>
-                    <SelectItem value="HIGH">High</SelectItem>
-                    <SelectItem value="URGENT">Urgent</SelectItem>
+                    {STATUS_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Priority</Label>
+                <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRIORITY_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Story Points</Label>
+                <Input
+                  type="number"
+                  placeholder="0"
+                  value={storyPoints}
+                  onChange={(e) => setStoryPoints(e.target.value)}
+                  min="0"
+                  max="100"
+                />
               </div>
             </div>
 
@@ -202,18 +278,18 @@ export function CreateTaskDialog({ projectId, members, repos }: CreateTaskDialog
               </Select>
             </div>
 
-            {repos.length > 0 && (
+            {sprints.length > 0 && (
               <div className="space-y-2">
-                <Label>Repository Scope (optional)</Label>
-                <Select value={repoScope} onValueChange={setRepoScope}>
+                <Label>Sprint (optional)</Label>
+                <Select value={sprintId} onValueChange={setSprintId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="All repositories" />
+                    <SelectValue placeholder="No Sprint" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={SELECT_SENTINELS.ALL}>All repositories</SelectItem>
-                    {repos.map((repo) => (
-                      <SelectItem key={repo.id} value={`${repo.owner}/${repo.name}`}>
-                        {repo.owner}/{repo.name}
+                    <SelectItem value={SELECT_SENTINELS.NO_SPRINT}>No Sprint</SelectItem>
+                    {sprints.map((sprint) => (
+                      <SelectItem key={sprint.id} value={sprint.id}>
+                        {sprint.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

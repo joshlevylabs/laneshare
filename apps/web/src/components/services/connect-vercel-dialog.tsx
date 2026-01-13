@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { Loader2, Plus, CheckCircle2, Cloud } from 'lucide-react'
+import { SELECT_SENTINELS } from '@laneshare/shared'
 
 interface ConnectVercelDialogProps {
   projectId: string
@@ -51,7 +52,7 @@ export function ConnectVercelDialog({ projectId }: ConnectVercelDialogProps) {
   const [displayName, setDisplayName] = useState('')
   const [teams, setTeams] = useState<Team[]>([])
   const [projects, setProjects] = useState<VercelProject[]>([])
-  const [selectedTeamId, setSelectedTeamId] = useState<string>('')
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(SELECT_SENTINELS.PERSONAL)
   const [selectedTeamSlug, setSelectedTeamSlug] = useState<string>('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
 
@@ -87,11 +88,12 @@ export function ConnectVercelDialog({ projectId }: ConnectVercelDialogProps) {
 
   const handleTeamChange = async (teamId: string) => {
     setSelectedTeamId(teamId)
+    const actualTeamId = teamId === SELECT_SENTINELS.PERSONAL ? null : teamId
     const team = teams.find((t) => t.id === teamId)
     setSelectedTeamSlug(team?.slug || '')
     setSelectedProjectIds([])
 
-    if (teamId) {
+    if (actualTeamId) {
       setIsLoading(true)
       try {
         const response = await fetch(`/api/projects/${projectId}/services/vercel/validate`, {
@@ -117,13 +119,14 @@ export function ConnectVercelDialog({ projectId }: ConnectVercelDialogProps) {
     setStep('validating')
 
     try {
+      const actualTeamId = selectedTeamId === SELECT_SENTINELS.PERSONAL ? undefined : selectedTeamId
       const response = await fetch(`/api/projects/${projectId}/services/vercel/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
           display_name: displayName || selectedTeamSlug || 'Vercel',
-          team_id: selectedTeamId || undefined,
+          team_id: actualTeamId,
           team_slug: selectedTeamSlug || undefined,
           project_ids: selectedProjectIds.length > 0 ? selectedProjectIds : undefined,
         }),
@@ -256,7 +259,7 @@ export function ConnectVercelDialog({ projectId }: ConnectVercelDialogProps) {
                       <SelectValue placeholder="Personal Account" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Personal Account</SelectItem>
+                      <SelectItem value={SELECT_SENTINELS.PERSONAL}>Personal Account</SelectItem>
                       {teams.map((team) => (
                         <SelectItem key={team.id} value={team.id}>
                           {team.name}

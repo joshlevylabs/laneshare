@@ -3,6 +3,15 @@ import type { Task, DocPage, SearchResult, Repo } from '../types'
 // Re-export doc generation prompts
 export * from './doc-generation'
 
+// Re-export agent prompts
+export * from './agent-prompts'
+
+// Re-export context AI prompts
+export * from './context-ai'
+
+// Re-export system map prompts
+export * from './system-map-prompts'
+
 export interface LanePilotContext {
   task?: Task
   projectName: string

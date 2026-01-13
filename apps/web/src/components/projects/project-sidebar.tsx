@@ -12,6 +12,8 @@ import {
   Settings,
   Search,
   Map,
+  Plug,
+  Boxes,
 } from 'lucide-react'
 
 interface ProjectSidebarProps {
@@ -50,9 +52,19 @@ const navItems = [
     icon: FileText,
   },
   {
+    title: 'Services',
+    href: '/services',
+    icon: Plug,
+  },
+  {
     title: 'Architecture Map',
     href: '/map',
     icon: Map,
+  },
+  {
+    title: 'System Maps',
+    href: '/systems',
+    icon: Boxes,
   },
   {
     title: 'Settings',

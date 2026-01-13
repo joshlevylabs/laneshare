@@ -107,7 +107,7 @@ export function ChatInterface({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'New Chat',
-          task_id: selectedTaskId || null,
+          task_id: taskSelect.decode(selectedTaskId),
         }),
       })
 
@@ -174,7 +174,7 @@ export function ChatInterface({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             content: userMessage,
-            task_id: selectedTaskId || activeThread.task_id,
+            task_id: taskSelect.decode(selectedTaskId) || activeThread.task_id,
           }),
         }
       )
@@ -274,7 +274,7 @@ export function ChatInterface({
                   <SelectValue placeholder="Select task (optional)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No task selected</SelectItem>
+                  <SelectItem value={SELECT_SENTINELS.NO_TASK}>No task selected</SelectItem>
                   {tasks.map((task) => (
                     <SelectItem key={task.id} value={task.id}>
                       {task.title}

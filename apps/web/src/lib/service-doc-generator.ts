@@ -356,7 +356,7 @@ ${data.git_repo ? `- **Repository:** ${data.git_repo.repo} (${data.git_repo.type
     for (const domain of domains) {
       const data = domain.data_json as unknown as DomainAssetData
       const projectName =
-        projects.find((p) => (p.data_json as VercelProjectAssetData).id === data.project_id)
+        projects.find((p) => (p.data_json as unknown as VercelProjectAssetData).id === data.project_id)
           ?.name || data.project_id
       vercelDoc += `| ${data.name} | ${projectName} | ${data.verified ? '✓' : '✗'} | ${data.configured ? '✓' : '✗'} |\n`
     }
@@ -417,7 +417,7 @@ This project is deployed using Vercel.
   for (const project of projects) {
     const data = project.data_json as unknown as VercelProjectAssetData
     const projectDomains = domains.filter(
-      (d) => (d.data_json as DomainAssetData).project_id === data.id
+      (d) => (d.data_json as unknown as DomainAssetData).project_id === data.id
     )
     const projectDeployments = deployments.filter((d) => d.name.startsWith(data.name))
 
@@ -425,7 +425,7 @@ This project is deployed using Vercel.
 
 ${data.framework ? `- **Framework:** ${data.framework}` : ''}
 - **Domains:** ${projectDomains.map((d) => d.name).join(', ') || 'None'}
-- **Latest Deployment:** ${projectDeployments.length > 0 ? (projectDeployments[0].data_json as DeploymentAssetData).state : 'N/A'}
+- **Latest Deployment:** ${projectDeployments.length > 0 ? (projectDeployments[0].data_json as unknown as DeploymentAssetData).state : 'N/A'}
 
 `
   }
@@ -434,7 +434,7 @@ ${data.framework ? `- **Framework:** ${data.framework}` : ''}
   if (envVars.length > 0) {
     const envByTarget: Record<string, string[]> = {}
     for (const envVar of envVars) {
-      const data = envVar.data_json as EnvVarAssetData
+      const data = envVar.data_json as unknown as EnvVarAssetData
       for (const target of data.target) {
         if (!envByTarget[target]) envByTarget[target] = []
         envByTarget[target].push(data.key)

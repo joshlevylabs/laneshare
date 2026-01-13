@@ -9,7 +9,7 @@ import type {
   PackageNode,
   Evidence,
 } from '../../types/architecture'
-import { generateNodeId, generateEvidenceId } from '../utils/ids'
+import { generateNodeId, generateEvidenceId, generateEdgeId } from '../utils/ids'
 
 interface PackageJson {
   name?: string
@@ -79,7 +79,7 @@ export async function analyzeInventory(
 
       // Create contains edge: repo -> app
       edges.push({
-        id: `${repoNodeId}_contains_${appNodeId}`,
+        id: generateEdgeId(repoNodeId, appNodeId, 'contains'),
         source: repoNodeId,
         target: appNodeId,
         type: 'contains',

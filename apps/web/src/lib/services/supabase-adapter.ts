@@ -226,28 +226,40 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
       buckets: 0,
       auth_providers: 0,
     }
+    const warnings: string[] = []
 
     try {
       const client = this.createClient(config.supabase_url, secrets.service_role_key)
 
+      // Check what introspection method is available
+      const introspectionMethod = await this.checkIntrospectionAvailable(client)
+      if (!introspectionMethod) {
+        warnings.push(
+          'Schema introspection requires setup. ' +
+          'Tables, policies, and functions could not be discovered. ' +
+          'Run the LaneShare setup SQL in your connected project. ' +
+          'See documentation for instructions.'
+        )
+      }
+
       // Fetch tables and columns
-      const tableAssets = await this.fetchTables(client)
+      const tableAssets = await this.fetchTables(client, introspectionMethod)
       assets.push(...tableAssets)
       stats.tables = tableAssets.filter((a) => a.asset_type === 'table').length
       stats.columns = tableAssets
         .filter((a) => a.asset_type === 'table')
-        .reduce((sum, t) => sum + ((t.data_json as TableAssetData).columns?.length || 0), 0)
+        .reduce((sum, t) => sum + ((t.data_json as unknown as TableAssetData).columns?.length || 0), 0)
 
       // Fetch RLS policies
-      const policyAssets = await this.fetchPolicies(client)
+      const policyAssets = await this.fetchPolicies(client, introspectionMethod)
       assets.push(...policyAssets)
       stats.policies = policyAssets.length
 
       // Fetch functions
-      const functionAssets = await this.fetchFunctions(client)
+      const functionAssets = await this.fetchFunctions(client, introspectionMethod)
       assets.push(...functionAssets)
-      stats.functions = functionAssets.filter((a) => !(a.data_json as FunctionAssetData).is_trigger).length
-      stats.triggers = functionAssets.filter((a) => (a.data_json as FunctionAssetData).is_trigger).length
+      stats.functions = functionAssets.filter((a) => !(a.data_json as unknown as FunctionAssetData).is_trigger).length
+      stats.triggers = functionAssets.filter((a) => (a.data_json as unknown as FunctionAssetData).is_trigger).length
 
       // Fetch storage buckets
       const bucketAssets = await this.fetchBuckets(client)
@@ -255,7 +267,7 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
       stats.buckets = bucketAssets.length
 
       // Fetch triggers
-      const triggerAssets = await this.fetchTriggers(client)
+      const triggerAssets = await this.fetchTriggers(client, introspectionMethod)
       assets.push(...triggerAssets)
       stats.triggers += triggerAssets.length
 
@@ -265,6 +277,7 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
         success: true,
         assets,
         stats,
+        warnings: warnings.length > 0 ? warnings : undefined,
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
@@ -275,8 +288,39 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
         assets,
         stats,
         error: message,
+        warnings: warnings.length > 0 ? warnings : undefined,
       }
     }
+  }
+
+  /**
+   * Check if introspection is available (views or RPC)
+   */
+  private async checkIntrospectionAvailable(client: SupabaseClient): Promise<'views' | 'rpc' | null> {
+    // First try views (preferred - no schema cache issues)
+    const { data: viewData, error: viewError } = await client
+      .from('_laneshare_tables')
+      .select('*')
+      .limit(1)
+
+    if (!viewError) {
+      console.log('[SupabaseAdapter] Introspection views available')
+      return 'views'
+    }
+    console.log('[SupabaseAdapter] Views not available:', viewError.message)
+
+    // Fall back to RPC
+    const { data: rpcData, error: rpcError } = await client.rpc('exec_sql', {
+      query: 'SELECT 1 as test',
+    }).maybeSingle()
+
+    if (!rpcError) {
+      console.log('[SupabaseAdapter] RPC function available')
+      return 'rpc'
+    }
+    console.log('[SupabaseAdapter] RPC check failed:', rpcError.message, 'Code:', rpcError.code)
+
+    return null
   }
 
   /**
@@ -312,45 +356,47 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
   /**
    * Fetch tables with their columns, primary keys, and foreign keys
    */
-  private async fetchTables(client: SupabaseClient): Promise<DiscoveredAsset[]> {
+  private async fetchTables(client: SupabaseClient, method: 'views' | 'rpc' | null): Promise<DiscoveredAsset[]> {
     const assets: DiscoveredAsset[] = []
 
-    // Fetch tables
-    const { data: tables, error: tablesError } = await client.rpc('exec_sql', {
-      query: TABLES_QUERY,
-    }).maybeSingle()
-
-    // If the RPC doesn't exist, try direct query approach
-    let tableRows: Array<{ table_schema: string; table_name: string }> = []
-
-    if (tablesError || !tables) {
-      // Try using the built-in introspection
-      const { data: schemaData } = await client.from('information_schema.tables' as never)
-        .select('*')
-        .limit(1)
-
-      // If direct access doesn't work, we'll need to use a different approach
-      // For now, let's try the REST API approach via PostgREST
-      // This is a fallback - in production you'd want proper RPC setup
-      console.log('[SupabaseAdapter] RPC not available, using REST API introspection')
-
-      // Since we can't execute raw SQL without RPC, we'll return empty
-      // In a real implementation, you'd set up the exec_sql function in the target DB
+    if (!method) {
+      console.log('[SupabaseAdapter] No introspection method available for tables')
       return assets
     }
 
-    if (Array.isArray(tables)) {
-      tableRows = tables
-    } else if (tables && typeof tables === 'object' && 'rows' in tables) {
-      tableRows = (tables as { rows: Array<{ table_schema: string; table_name: string }> }).rows
+    let tableRows: Array<{ table_schema: string; table_name: string }> = []
+
+    if (method === 'views') {
+      // Use views approach
+      const { data: tables, error } = await client
+        .from('_laneshare_tables')
+        .select('*')
+
+      if (error) {
+        console.log('[SupabaseAdapter] Error fetching tables via view:', error.message)
+        return assets
+      }
+      tableRows = tables || []
+    } else {
+      // Use RPC approach
+      const { data: tables, error: tablesError } = await client.rpc('exec_sql', {
+        query: TABLES_QUERY,
+      }).maybeSingle()
+
+      if (tablesError || !tables) {
+        console.log('[SupabaseAdapter] RPC not available for tables')
+        return assets
+      }
+
+      if (Array.isArray(tables)) {
+        tableRows = tables
+      } else if (tables && typeof tables === 'object' && 'rows' in tables) {
+        tableRows = (tables as { rows: Array<{ table_schema: string; table_name: string }> }).rows
+      }
     }
 
     // Fetch columns
-    const { data: columnsData } = await client.rpc('exec_sql', {
-      query: COLUMNS_QUERY,
-    }).maybeSingle()
-
-    const columnRows: Array<{
+    let columnRows: Array<{
       table_schema: string
       table_name: string
       column_name: string
@@ -358,41 +404,63 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
       udt_name: string
       is_nullable: string
       column_default: string | null
-    }> = Array.isArray(columnsData) ? columnsData :
-      (columnsData && typeof columnsData === 'object' && 'rows' in columnsData)
-        ? (columnsData as { rows: typeof columnRows }).rows
-        : []
+    }> = []
+
+    if (method === 'views') {
+      const { data } = await client.from('_laneshare_columns').select('*')
+      columnRows = data || []
+    } else {
+      const { data: columnsData } = await client.rpc('exec_sql', {
+        query: COLUMNS_QUERY,
+      }).maybeSingle()
+      columnRows = Array.isArray(columnsData) ? columnsData :
+        (columnsData && typeof columnsData === 'object' && 'rows' in columnsData)
+          ? (columnsData as { rows: typeof columnRows }).rows
+          : []
+    }
 
     // Fetch primary keys
-    const { data: pkData } = await client.rpc('exec_sql', {
-      query: PRIMARY_KEYS_QUERY,
-    }).maybeSingle()
-
-    const pkRows: Array<{
+    let pkRows: Array<{
       table_schema: string
       table_name: string
       column_name: string
-    }> = Array.isArray(pkData) ? pkData :
-      (pkData && typeof pkData === 'object' && 'rows' in pkData)
-        ? (pkData as { rows: typeof pkRows }).rows
-        : []
+    }> = []
+
+    if (method === 'views') {
+      const { data } = await client.from('_laneshare_primary_keys').select('*')
+      pkRows = data || []
+    } else {
+      const { data: pkData } = await client.rpc('exec_sql', {
+        query: PRIMARY_KEYS_QUERY,
+      }).maybeSingle()
+      pkRows = Array.isArray(pkData) ? pkData :
+        (pkData && typeof pkData === 'object' && 'rows' in pkData)
+          ? (pkData as { rows: typeof pkRows }).rows
+          : []
+    }
 
     // Fetch foreign keys
-    const { data: fkData } = await client.rpc('exec_sql', {
-      query: FOREIGN_KEYS_QUERY,
-    }).maybeSingle()
-
-    const fkRows: Array<{
+    let fkRows: Array<{
       table_schema: string
       table_name: string
       column_name: string
       foreign_table_schema: string
       foreign_table_name: string
       foreign_column_name: string
-    }> = Array.isArray(fkData) ? fkData :
-      (fkData && typeof fkData === 'object' && 'rows' in fkData)
-        ? (fkData as { rows: typeof fkRows }).rows
-        : []
+    }> = []
+
+    if (method === 'views') {
+      const { data } = await client.from('_laneshare_foreign_keys').select('*')
+      fkRows = data || []
+    } else {
+      const { data: fkData } = await client.rpc('exec_sql', {
+        query: FOREIGN_KEYS_QUERY,
+      }).maybeSingle()
+      fkRows = Array.isArray(fkData) ? fkData :
+        (fkData && typeof fkData === 'object' && 'rows' in fkData)
+          ? (fkData as { rows: typeof fkRows }).rows
+          : []
+    }
 
     // Build table assets with columns
     for (const table of tableRows) {
@@ -448,19 +516,12 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
   /**
    * Fetch RLS policies
    */
-  private async fetchPolicies(client: SupabaseClient): Promise<DiscoveredAsset[]> {
+  private async fetchPolicies(client: SupabaseClient, method: 'views' | 'rpc' | null): Promise<DiscoveredAsset[]> {
     const assets: DiscoveredAsset[] = []
 
-    const { data, error } = await client.rpc('exec_sql', {
-      query: POLICIES_QUERY,
-    }).maybeSingle()
+    if (!method) return assets
 
-    if (error) {
-      console.log('[SupabaseAdapter] Could not fetch policies:', error.message)
-      return assets
-    }
-
-    const rows: Array<{
+    let rows: Array<{
       policy_name: string
       schema_name: string
       table_name: string
@@ -468,10 +529,30 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
       definition: string | null
       with_check: string | null
       roles: string[]
-    }> = Array.isArray(data) ? data :
-      (data && typeof data === 'object' && 'rows' in data)
-        ? (data as { rows: typeof rows }).rows
-        : []
+    }> = []
+
+    if (method === 'views') {
+      const { data, error } = await client.from('_laneshare_policies').select('*')
+      if (error) {
+        console.log('[SupabaseAdapter] Could not fetch policies via view:', error.message)
+        return assets
+      }
+      rows = data || []
+    } else {
+      const { data, error } = await client.rpc('exec_sql', {
+        query: POLICIES_QUERY,
+      }).maybeSingle()
+
+      if (error) {
+        console.log('[SupabaseAdapter] Could not fetch policies:', error.message)
+        return assets
+      }
+
+      rows = Array.isArray(data) ? data :
+        (data && typeof data === 'object' && 'rows' in data)
+          ? (data as { rows: typeof rows }).rows
+          : []
+    }
 
     for (const row of rows) {
       const policyKey = `${row.schema_name}.${row.table_name}.${row.policy_name}`
@@ -500,29 +581,42 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
   /**
    * Fetch functions (including trigger functions)
    */
-  private async fetchFunctions(client: SupabaseClient): Promise<DiscoveredAsset[]> {
+  private async fetchFunctions(client: SupabaseClient, method: 'views' | 'rpc' | null): Promise<DiscoveredAsset[]> {
     const assets: DiscoveredAsset[] = []
 
-    const { data, error } = await client.rpc('exec_sql', {
-      query: FUNCTIONS_QUERY,
-    }).maybeSingle()
+    if (!method) return assets
 
-    if (error) {
-      console.log('[SupabaseAdapter] Could not fetch functions:', error.message)
-      return assets
-    }
-
-    const rows: Array<{
+    let rows: Array<{
       function_name: string
       schema_name: string
       language: string
       return_type: string
       arguments: string
       is_trigger: boolean
-    }> = Array.isArray(data) ? data :
-      (data && typeof data === 'object' && 'rows' in data)
-        ? (data as { rows: typeof rows }).rows
-        : []
+    }> = []
+
+    if (method === 'views') {
+      const { data, error } = await client.from('_laneshare_functions').select('*')
+      if (error) {
+        console.log('[SupabaseAdapter] Could not fetch functions via view:', error.message)
+        return assets
+      }
+      rows = data || []
+    } else {
+      const { data, error } = await client.rpc('exec_sql', {
+        query: FUNCTIONS_QUERY,
+      }).maybeSingle()
+
+      if (error) {
+        console.log('[SupabaseAdapter] Could not fetch functions:', error.message)
+        return assets
+      }
+
+      rows = Array.isArray(data) ? data :
+        (data && typeof data === 'object' && 'rows' in data)
+          ? (data as { rows: typeof rows }).rows
+          : []
+    }
 
     for (const row of rows) {
       const funcKey = `${row.schema_name}.${row.function_name}(${row.arguments})`
@@ -550,29 +644,42 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
   /**
    * Fetch triggers
    */
-  private async fetchTriggers(client: SupabaseClient): Promise<DiscoveredAsset[]> {
+  private async fetchTriggers(client: SupabaseClient, method: 'views' | 'rpc' | null): Promise<DiscoveredAsset[]> {
     const assets: DiscoveredAsset[] = []
 
-    const { data, error } = await client.rpc('exec_sql', {
-      query: TRIGGERS_QUERY,
-    }).maybeSingle()
+    if (!method) return assets
 
-    if (error) {
-      console.log('[SupabaseAdapter] Could not fetch triggers:', error.message)
-      return assets
-    }
-
-    const rows: Array<{
+    let rows: Array<{
       trigger_name: string
       schema_name: string
       table_name: string
       function_name: string
       timing: string
       event: string
-    }> = Array.isArray(data) ? data :
-      (data && typeof data === 'object' && 'rows' in data)
+    }> = []
+
+    if (method === 'views') {
+      const { data, error } = await client.from('_laneshare_triggers').select('*')
+      if (error) {
+        console.log('[SupabaseAdapter] Could not fetch triggers via view:', error.message)
+        return assets
+      }
+      rows = data || []
+    } else {
+      const { data, error } = await client.rpc('exec_sql', {
+        query: TRIGGERS_QUERY,
+      }).maybeSingle()
+
+      if (error) {
+        console.log('[SupabaseAdapter] Could not fetch triggers:', error.message)
+        return assets
+      }
+
+      rows = Array.isArray(data) ? data :
+        (data && typeof data === 'object' && 'rows' in data)
         ? (data as { rows: typeof rows }).rows
         : []
+    }
 
     for (const row of rows) {
       const triggerKey = `${row.schema_name}.${row.table_name}.${row.trigger_name}`

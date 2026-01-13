@@ -87,15 +87,22 @@ export async function POST(
 
 async function syncRepository(
   repoId: string,
-  repo: { owner: string; name: string; default_branch: string; project_id: string },
+  repo: { owner: string; name: string; default_branch: string; selected_branch: string | null; project_id: string },
   encryptedToken: string,
   supabase: ReturnType<typeof createServiceRoleClient>
 ) {
   const github = await GitHubClient.fromEncryptedToken(encryptedToken)
   const embeddingProvider = getEmbeddingProvider()
 
+  // Use selected_branch if set, otherwise default_branch
+  const branch = repo.selected_branch || repo.default_branch
+
+  // Get latest commit SHA for this branch
+  const latestCommit = await github.getLatestCommit(repo.owner, repo.name, branch)
+  const latestCommitSha = latestCommit.sha
+
   // Get the file tree
-  const { tree } = await github.getTree(repo.owner, repo.name, repo.default_branch, true)
+  const { tree } = await github.getTree(repo.owner, repo.name, branch, true)
 
   // Filter to indexable files
   const indexableFiles = tree.filter(
@@ -230,12 +237,14 @@ async function syncRepository(
     console.error('[DocGen] Documentation generation failed:', error)
   }
 
-  // Update repo status to synced and clear progress fields
+  // Update repo status to synced, store commit SHA, and clear progress fields
   await supabase
     .from('repos')
     .update({
       status: 'SYNCED',
       last_synced_at: new Date().toISOString(),
+      last_synced_commit_sha: latestCommitSha,
+      has_updates: false,
       sync_error: null,
       sync_progress: null,
       sync_total: null,

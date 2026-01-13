@@ -121,6 +121,7 @@ async function performSync(
     }
 
     stats = result.stats as SupabaseSyncStats
+    const warnings = result.warnings || []
 
     // Delete existing assets for this connection
     await supabase
@@ -149,13 +150,14 @@ async function performSync(
       }
     }
 
-    // Update connection status
+    // Update connection status (set warning if we have warnings but it succeeded)
+    const connectionStatus = warnings.length > 0 ? 'WARNING' : 'CONNECTED'
     await supabase
       .from('project_service_connections')
       .update({
-        status: 'CONNECTED',
+        status: connectionStatus,
         last_synced_at: new Date().toISOString(),
-        last_sync_error: null,
+        last_sync_error: warnings.length > 0 ? warnings.join('\n') : null,
       })
       .eq('id', connectionId)
 
@@ -163,13 +165,16 @@ async function performSync(
     await supabase
       .from('service_sync_runs')
       .update({
-        status: 'SUCCESS',
+        status: warnings.length > 0 ? 'WARNING' : 'SUCCESS',
         finished_at: new Date().toISOString(),
-        stats_json: stats,
+        stats_json: { ...stats, warnings },
       })
       .eq('id', syncRunId)
 
     console.log('[Supabase Sync] Completed successfully:', stats)
+    if (warnings.length > 0) {
+      console.log('[Supabase Sync] Warnings:', warnings)
+    }
 
     // Trigger documentation generation in background
     runServiceDocGeneration(projectId, 'supabase', supabase)

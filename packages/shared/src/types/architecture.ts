@@ -44,10 +44,14 @@ export interface AppNode extends BaseNode {
   type: 'app'
   metadata: {
     repoId: string
-    appPath: string // e.g., 'apps/web'
+    appPath: string // e.g., 'apps/web' or 'aegis' for Python modules
     framework: string
     hasApiRoutes: boolean
     hasPages: boolean
+    moduleType?: string // e.g., 'service', 'store', 'api' for Python modules
+    classType?: string // Python class type (service, store, adapter, schema)
+    bases?: string[] // Python class inheritance bases
+    methods?: string[] // Python class methods
   }
 }
 
@@ -105,9 +109,9 @@ export interface FunctionNode extends BaseNode {
 export interface StorageNode extends BaseNode {
   type: 'storage'
   metadata: {
-    provider: 'supabase' | 's3' | 'gcs'
+    provider: 'supabase' | 's3' | 'gcs' | 'neo4j' | 'pinecone' | 'redis' | 'postgres' | 'mysql' | 'mongodb' | 'database' | string
     bucket?: string
-    isPublic: boolean
+    isPublic?: boolean // Optional for non-bucket storage
   }
 }
 

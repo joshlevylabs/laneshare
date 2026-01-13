@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { GitHubClient } from '@/lib/github'
 import { NextResponse } from 'next/server'
 
 export async function GET(
@@ -54,10 +55,10 @@ export async function DELETE(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Get the repo
+  // Get the repo with all details needed for webhook cleanup
   const { data: repo, error: repoError } = await supabase
     .from('repos')
-    .select('project_id')
+    .select('project_id, owner, name, webhook_id')
     .eq('id', params.id)
     .single()
 
@@ -78,6 +79,26 @@ export async function DELETE(
       { error: 'Only project owners and maintainers can delete repositories' },
       { status: 403 }
     )
+  }
+
+  // Delete webhook from GitHub if it exists
+  if (repo.webhook_id) {
+    const { data: connection } = await supabase
+      .from('github_connections')
+      .select('access_token_encrypted')
+      .eq('user_id', user.id)
+      .single()
+
+    if (connection?.access_token_encrypted) {
+      try {
+        const github = await GitHubClient.fromEncryptedToken(connection.access_token_encrypted)
+        await github.deleteWebhook(repo.owner, repo.name, repo.webhook_id)
+        console.log(`[Webhook] Deleted webhook ${repo.webhook_id} for ${repo.owner}/${repo.name}`)
+      } catch (webhookError) {
+        console.error('[Webhook] Failed to delete webhook:', webhookError)
+        // Continue with repo deletion anyway
+      }
+    }
   }
 
   // Delete repo (cascades to chunks and files)

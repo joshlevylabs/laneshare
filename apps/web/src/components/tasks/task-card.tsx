@@ -35,6 +35,7 @@ import {
   LayoutList,
   GitBranch,
   CornerDownRight,
+  Bot,
 } from 'lucide-react'
 import Link from 'next/link'
 import { EditTaskDialog } from './edit-task-dialog'
@@ -196,6 +197,12 @@ export function TaskCard({ task, projectId, members, isDragging }: TaskCardProps
                   <Link href={`/projects/${projectId}/chat?taskId=${task.id}`}>
                     <MessageSquare className="mr-2 h-4 w-4" />
                     Generate Prompt
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/projects/${projectId}/tasks/${task.id}/implement`}>
+                    <Bot className="mr-2 h-4 w-4" />
+                    AI Implement
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

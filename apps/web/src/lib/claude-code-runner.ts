@@ -21,6 +21,7 @@ import {
   REPO_DOC_SYSTEM_PROMPT,
   buildRepoDocPrompt,
   buildRepoDocFollowUpPrompt,
+  buildRepoDocContinuationPrompt,
 } from '@laneshare/shared'
 
 // ===========================================
@@ -74,6 +75,16 @@ export interface ClaudeRunnerOptions {
   maxTokens?: number
   useMock?: boolean
   useCLI?: boolean // Use Claude Code CLI instead of direct API calls
+  maxContinuations?: number // Max number of continuation attempts for truncated responses (default: 3)
+  onProgress?: (progress: ClaudeRunnerProgress) => void // Progress callback for UI updates
+}
+
+export interface ClaudeRunnerProgress {
+  stage: 'starting' | 'calling_api' | 'parsing' | 'continuation' | 'complete' | 'error'
+  message: string
+  pagesGenerated?: number
+  continuationAttempt?: number
+  maxContinuations?: number
 }
 
 export interface ClaudeRunnerResult {
@@ -93,81 +104,414 @@ export interface IClaudeRunner {
 
 /**
  * Real Claude Code runner using Anthropic API
+ * Supports automatic continuation when responses are truncated
  */
 export class ClaudeRunner implements IClaudeRunner {
   private client: Anthropic
   private model: string
   private maxTokens: number
+  private maxContinuations: number
+  private onProgress?: (progress: ClaudeRunnerProgress) => void
 
   constructor(options: ClaudeRunnerOptions = {}) {
     this.client = new Anthropic({
       apiKey: options.apiKey || process.env.ANTHROPIC_API_KEY,
+      timeout: 5 * 60 * 1000, // 5 minute timeout - increased for larger prompts with verification
     })
     this.model = options.model || 'claude-sonnet-4-20250514'
-    // Increased to 32000 to accommodate larger documentation output
-    // Claude Sonnet supports up to 64K output tokens
-    this.maxTokens = options.maxTokens || 32000
+    // Reduced to 8000 for faster API response - documentation will be generated in multiple rounds
+    this.maxTokens = options.maxTokens || 8000
+    this.maxContinuations = options.maxContinuations ?? 3
+    this.onProgress = options.onProgress
+
+    console.log(`[ClaudeRunner] Initialized with model: ${this.model}, maxTokens: ${this.maxTokens}`)
+  }
+
+  private async reportProgress(progress: ClaudeRunnerProgress): Promise<void> {
+    console.log(`[ClaudeRunner] Progress: ${progress.stage} - ${progress.message}`)
+    if (this.onProgress) {
+      try {
+        await this.onProgress(progress)
+      } catch (err) {
+        console.error('[ClaudeRunner] Error in progress callback:', err)
+      }
+    }
   }
 
   async run(context: RepoContext, previousOutput?: Partial<ClaudeCodeDocOutput>): Promise<ClaudeRunnerResult> {
+    // Track accumulated pages across continuations
+    let accumulatedPages: ValidatedClaudeOutput['pages'] = []
+    let accumulatedWarnings: string[] = []
+    let accumulatedTasks: ValidatedClaudeOutput['tasks'] = []
+    let repoSummary: ValidatedClaudeOutput['repo_summary'] | undefined
+    let needsMoreFiles: string[] | undefined
+    let continuationAttempt = 0
+
+    await this.reportProgress({
+      stage: 'starting',
+      message: `Starting documentation generation for ${context.repo_owner}/${context.repo_name}`,
+      pagesGenerated: 0,
+    })
+
     try {
-      // Build the appropriate prompt
-      const prompt = previousOutput?.needs_more_files
+      // Build the initial prompt
+      let prompt = previousOutput?.needs_more_files
         ? buildRepoDocFollowUpPrompt(context, {
             warnings: previousOutput.warnings || [],
             needs_more_files: previousOutput.needs_more_files,
           })
         : buildRepoDocPrompt(context)
 
-      console.log(`[ClaudeRunner] Calling Claude API for ${context.repo_owner}/${context.repo_name} (round ${context.round})`)
+      // Main loop: initial call + continuations
+      while (continuationAttempt <= this.maxContinuations) {
+        await this.reportProgress({
+          stage: continuationAttempt === 0 ? 'calling_api' : 'continuation',
+          message: continuationAttempt === 0
+            ? `Calling Claude API (round ${context.round})`
+            : `Continuation attempt ${continuationAttempt}/${this.maxContinuations}`,
+          pagesGenerated: accumulatedPages.length,
+          continuationAttempt,
+          maxContinuations: this.maxContinuations,
+        })
 
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: this.maxTokens,
-        system: REPO_DOC_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
+        console.log(`[ClaudeRunner] Calling Claude API for ${context.repo_owner}/${context.repo_name} (round ${context.round}, continuation ${continuationAttempt})`)
+        console.log(`[ClaudeRunner] Prompt length: ${prompt.length} chars, System prompt length: ${REPO_DOC_SYSTEM_PROMPT.length} chars`)
+
+        let response
+        try {
+          const startTime = Date.now()
+          const TIMEOUT_MS = 300000 // 5 minute timeout (larger prompts with verification need more time)
+
+          // Create AbortController for timeout
+          const abortController = new AbortController()
+          const timeoutId = setTimeout(() => {
+            console.log(`[ClaudeRunner] Request timed out after ${TIMEOUT_MS/1000}s, aborting...`)
+            abortController.abort()
+          }, TIMEOUT_MS)
+
+          // Log heartbeat every 15 seconds while waiting
+          const heartbeatInterval = setInterval(() => {
+            const elapsed = Math.round((Date.now() - startTime) / 1000)
+            console.log(`[ClaudeRunner] Still waiting for API response... (${elapsed}s elapsed)`)
+          }, 15000)
+
+          try {
+            response = await this.client.messages.create({
+              model: this.model,
+              max_tokens: this.maxTokens,
+              system: REPO_DOC_SYSTEM_PROMPT,
+              messages: [
+                {
+                  role: 'user',
+                  content: prompt,
+                },
+              ],
+            }, {
+              signal: abortController.signal,
+            })
+          } finally {
+            clearTimeout(timeoutId)
+            clearInterval(heartbeatInterval)
+          }
+
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+          console.log(`[ClaudeRunner] API call completed in ${elapsed}s`)
+        } catch (apiError) {
+          console.error('[ClaudeRunner] API call failed:', apiError)
+          const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown API error'
+          await this.reportProgress({
+            stage: 'error',
+            message: `API Error: ${errorMessage}`,
+            pagesGenerated: accumulatedPages.length,
+          })
+          return {
+            success: false,
+            error: `Claude API error: ${errorMessage}`,
+          }
+        }
+
+        // Extract text from response
+        const textContent = response.content.find(c => c.type === 'text')
+        if (!textContent || textContent.type !== 'text') {
+          return {
+            success: false,
+            error: 'No text content in Claude response',
+          }
+        }
+
+        const rawOutput = textContent.text
+        console.log(`[ClaudeRunner] Response received. Length: ${rawOutput?.length || 0} chars, stop_reason: ${response.stop_reason}`)
+
+        if (!rawOutput || rawOutput.length === 0) {
+          return {
+            success: false,
+            error: 'Empty response from Claude API',
+          }
+        }
+
+        // Check if response was truncated
+        const wasTruncated = response.stop_reason === 'max_tokens'
+        if (wasTruncated) {
+          console.warn('[ClaudeRunner] Response was truncated (max_tokens). Attempting to extract partial data...')
+        }
+
+        // Try to parse the response (may be truncated)
+        await this.reportProgress({
+          stage: 'parsing',
+          message: wasTruncated ? 'Extracting partial data from truncated response' : 'Parsing response',
+          pagesGenerated: accumulatedPages.length,
+        })
+
+        const parseResult = wasTruncated
+          ? this.extractPartialPages(rawOutput)
+          : this.parseAndValidate(rawOutput)
+
+        // Accumulate results
+        if (parseResult.output) {
+          // Store repo summary from first successful parse
+          if (!repoSummary && parseResult.output.repo_summary) {
+            repoSummary = parseResult.output.repo_summary
+          }
+
+          // Add new pages (avoid duplicates by slug)
+          const existingSlugs = new Set(accumulatedPages.map(p => p.slug))
+          for (const page of parseResult.output.pages) {
+            if (!existingSlugs.has(page.slug)) {
+              accumulatedPages.push(page)
+              existingSlugs.add(page.slug)
+            }
+          }
+
+          // Accumulate warnings and tasks
+          accumulatedWarnings.push(...(parseResult.output.warnings || []))
+          if (parseResult.output.tasks) {
+            accumulatedTasks.push(...parseResult.output.tasks)
+          }
+          needsMoreFiles = parseResult.output.needs_more_files
+        }
+
+        console.log(`[ClaudeRunner] Accumulated ${accumulatedPages.length} pages so far`)
+
+        // If not truncated, we're done
+        if (!wasTruncated) {
+          break
+        }
+
+        // If we still have continuation attempts, build continuation prompt
+        continuationAttempt++
+        if (continuationAttempt <= this.maxContinuations) {
+          console.log(`[ClaudeRunner] Building continuation prompt (attempt ${continuationAttempt})`)
+
+          // Build continuation prompt with list of completed pages
+          const completedPages = accumulatedPages.map(p => ({
+            category: p.category,
+            slug: p.slug,
+            title: p.title,
+          }))
+
+          prompt = buildRepoDocContinuationPrompt(context, completedPages)
+        }
+      }
+
+      // Build final output from accumulated data
+      if (accumulatedPages.length === 0) {
+        return {
+          success: false,
+          error: 'Failed to extract any documentation pages',
+        }
+      }
+
+      // Deduplicate warnings
+      const uniqueWarnings = [...new Set(accumulatedWarnings)]
+
+      const finalOutput: ValidatedClaudeOutput = {
+        repo_summary: repoSummary || {
+          name: context.repo_name,
+          tech_stack: [],
+          entrypoints: [],
+        },
+        warnings: uniqueWarnings,
+        needs_more_files: needsMoreFiles,
+        pages: accumulatedPages,
+        tasks: accumulatedTasks.length > 0 ? accumulatedTasks : undefined,
+      }
+
+      await this.reportProgress({
+        stage: 'complete',
+        message: `Documentation generation complete: ${accumulatedPages.length} pages`,
+        pagesGenerated: accumulatedPages.length,
       })
 
-      // Extract text from response
-      const textContent = response.content.find(c => c.type === 'text')
-      if (!textContent || textContent.type !== 'text') {
-        return {
-          success: false,
-          error: 'No text content in Claude response',
-        }
+      return {
+        success: true,
+        output: finalOutput,
+        rawOutput: JSON.stringify(finalOutput, null, 2),
+        needsMoreFiles,
       }
-
-      const rawOutput = textContent.text
-
-      // Log response info for debugging
-      console.log(`[ClaudeRunner] Response received. Length: ${rawOutput?.length || 0} chars, stop_reason: ${response.stop_reason}`)
-
-      // Check for empty response
-      if (!rawOutput || rawOutput.length === 0) {
-        return {
-          success: false,
-          error: 'Empty response from Claude API',
-        }
-      }
-
-      // Check if response was truncated due to max_tokens
-      if (response.stop_reason === 'max_tokens') {
-        console.warn('[ClaudeRunner] Response was truncated (max_tokens). Output may be incomplete.')
-        // Try to parse anyway - sometimes the JSON is complete enough
-      }
-
-      // Parse and validate JSON
-      return this.parseAndValidate(rawOutput)
     } catch (error) {
       console.error('[ClaudeRunner] Error:', error)
+      await this.reportProgress({
+        stage: 'error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        pagesGenerated: accumulatedPages.length,
+      })
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error calling Claude API',
+      }
+    }
+  }
+
+  /**
+   * Extract partial valid pages from a truncated JSON response
+   * This attempts to salvage any complete page objects from an incomplete response
+   */
+  private extractPartialPages(rawOutput: string): ClaudeRunnerResult {
+    console.log('[ClaudeRunner] Attempting to extract partial pages from truncated response')
+
+    try {
+      // Strip markdown code blocks if present
+      let jsonStr = rawOutput.trim()
+      if (jsonStr.startsWith('```json')) {
+        jsonStr = jsonStr.slice(7)
+      }
+      if (jsonStr.startsWith('```')) {
+        jsonStr = jsonStr.slice(3)
+      }
+
+      // Try to find complete page objects using regex
+      const pages: ValidatedClaudeOutput['pages'] = []
+      const warnings: string[] = []
+      let repoSummary: ValidatedClaudeOutput['repo_summary'] | undefined
+
+      // Try to extract repo_summary
+      const summaryMatch = jsonStr.match(/"repo_summary"\s*:\s*(\{[^}]+\})/s)
+      if (summaryMatch) {
+        try {
+          const summary = JSON.parse(summaryMatch[1])
+          repoSummary = {
+            name: summary.name || 'unknown',
+            tech_stack: Array.isArray(summary.tech_stack) ? summary.tech_stack : [],
+            entrypoints: Array.isArray(summary.entrypoints) ? summary.entrypoints : [],
+          }
+        } catch {
+          console.log('[ClaudeRunner] Could not parse repo_summary')
+        }
+      }
+
+      // Try to extract warnings array
+      const warningsMatch = jsonStr.match(/"warnings"\s*:\s*\[((?:[^\[\]]|\[(?:[^\[\]]|\[[^\[\]]*\])*\])*)\]/s)
+      if (warningsMatch) {
+        try {
+          const parsedWarnings = JSON.parse(`[${warningsMatch[1]}]`)
+          if (Array.isArray(parsedWarnings)) {
+            warnings.push(...parsedWarnings.filter((w): w is string => typeof w === 'string'))
+          }
+        } catch {
+          console.log('[ClaudeRunner] Could not parse warnings array')
+        }
+      }
+
+      // Find all complete page objects
+      // Match pattern: {"category": ..., "slug": ..., "title": ..., "markdown": ..., "evidence": [...]}
+      const pageRegex = /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"slug"\s*:\s*"([^"]+)"\s*,\s*"title"\s*:\s*"([^"]+)"\s*,\s*"markdown"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"evidence"\s*:\s*(\[[^\]]*\])\s*\}/gs
+
+      let match
+      while ((match = pageRegex.exec(jsonStr)) !== null) {
+        try {
+          const [, category, slug, title, markdownEscaped, evidenceStr] = match
+
+          // Parse the escaped markdown
+          const markdown = JSON.parse(`"${markdownEscaped}"`)
+
+          // Parse evidence array
+          let evidence: Array<{ file_path: string; excerpt: string; reason: string }> = []
+          try {
+            evidence = JSON.parse(evidenceStr)
+          } catch {
+            evidence = []
+          }
+
+          // Validate category
+          if (['ARCHITECTURE', 'API', 'FEATURE', 'RUNBOOK'].includes(category)) {
+            pages.push({
+              category: category as 'ARCHITECTURE' | 'API' | 'FEATURE' | 'RUNBOOK',
+              slug,
+              title,
+              markdown,
+              evidence,
+            })
+            console.log(`[ClaudeRunner] Extracted page: ${slug}`)
+          }
+        } catch (e) {
+          console.log('[ClaudeRunner] Failed to parse page match:', e)
+        }
+      }
+
+      // If regex didn't work well, try a simpler approach: split by pages array
+      if (pages.length === 0) {
+        console.log('[ClaudeRunner] Regex approach failed, trying JSON repair')
+
+        // Try to repair the JSON by closing brackets
+        let repairedJson = jsonStr
+
+        // Count open brackets and close them
+        const openBraces = (jsonStr.match(/\{/g) || []).length
+        const closeBraces = (jsonStr.match(/\}/g) || []).length
+        const openBrackets = (jsonStr.match(/\[/g) || []).length
+        const closeBrackets = (jsonStr.match(/\]/g) || []).length
+
+        // Add missing closing brackets
+        repairedJson += ']'.repeat(Math.max(0, openBrackets - closeBrackets))
+        repairedJson += '}'.repeat(Math.max(0, openBraces - closeBraces))
+
+        try {
+          const parsed = JSON.parse(repairedJson)
+          if (parsed.pages && Array.isArray(parsed.pages)) {
+            for (const page of parsed.pages) {
+              try {
+                const validatedPage = ClaudeCodeDocPageSchema.parse(page)
+                pages.push(validatedPage)
+              } catch {
+                // Skip invalid pages
+              }
+            }
+          }
+          if (parsed.repo_summary) {
+            repoSummary = parsed.repo_summary
+          }
+        } catch {
+          console.log('[ClaudeRunner] JSON repair also failed')
+        }
+      }
+
+      console.log(`[ClaudeRunner] Extracted ${pages.length} complete pages from truncated response`)
+
+      if (pages.length === 0) {
+        return {
+          success: false,
+          error: 'Could not extract any valid pages from truncated response',
+          rawOutput,
+        }
+      }
+
+      warnings.push('[Partial] Some documentation may be incomplete due to response truncation')
+
+      return {
+        success: true,
+        output: {
+          repo_summary: repoSummary || { name: 'unknown', tech_stack: [], entrypoints: [] },
+          warnings,
+          pages,
+        },
+        rawOutput,
+      }
+    } catch (error) {
+      console.error('[ClaudeRunner] Error extracting partial pages:', error)
+      return {
+        success: false,
+        error: 'Failed to extract partial pages from truncated response',
+        rawOutput,
       }
     }
   }

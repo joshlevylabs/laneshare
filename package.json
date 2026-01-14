@@ -7,14 +7,14 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=apps/web",
-    "build": "npm run build --workspace=apps/web",
-    "start": "npm run start --workspace=apps/web",
-    "lint": "npm run lint --workspace=apps/web",
-    "test": "npm run test --workspaces --if-present",
+    "dev": "pnpm --filter @laneshare/web dev",
+    "build": "pnpm --filter @laneshare/web build",
+    "start": "pnpm --filter @laneshare/web start",
+    "lint": "pnpm --filter @laneshare/web lint",
+    "test": "pnpm -r --if-present test",
     "db:migrate": "cd supabase && supabase db push",
     "db:reset": "cd supabase && supabase db reset",
-    "worker:dev": "npm run dev --workspace=packages/worker"
+    "worker:dev": "pnpm --filter @laneshare/worker dev"
   },
   "devDependencies": {
     "typescript": "^5.3.3"

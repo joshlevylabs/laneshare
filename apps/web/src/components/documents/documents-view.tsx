@@ -7,8 +7,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { formatRelativeTime, DOCUMENT_CATEGORY_LABELS, type DocumentCategory, type ProjectRole } from '@laneshare/shared'
+import { useToast } from '@/hooks/use-toast'
 import {
   FileText,
   Plus,
@@ -23,6 +25,9 @@ import {
   MessageSquare,
   MoreVertical,
   ChevronRight,
+  Trash2,
+  X,
+  CheckSquare,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -30,6 +35,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface DocumentListItem {
   id: string
@@ -91,10 +106,19 @@ export function DocumentsView({
   userRole,
 }: DocumentsViewProps) {
   const router = useRouter()
+  const { toast } = useToast()
   const [search, setSearch] = useState(initialSearch || '')
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory | null>(
     (initialCategory as DocumentCategory) || null
   )
+
+  // Selection mode state
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const canDelete = ['OWNER', 'MAINTAINER'].includes(userRole)
 
   // Group documents by category for sidebar
   const docsByCategory = documents.reduce((acc, doc) => {
@@ -131,6 +155,62 @@ export function DocumentsView({
     if (selectedCategory) params.set('category', selectedCategory)
     if (value) params.set('search', value)
     router.push(`/projects/${projectId}/documents${params.toString() ? `?${params.toString()}` : ''}`)
+  }
+
+  const toggleSelection = (id: string) => {
+    const newSelected = new Set(selectedIds)
+    if (newSelected.has(id)) {
+      newSelected.delete(id)
+    } else {
+      newSelected.add(id)
+    }
+    setSelectedIds(newSelected)
+  }
+
+  const selectAll = () => {
+    setSelectedIds(new Set(filteredDocs.map(d => d.id)))
+  }
+
+  const clearSelection = () => {
+    setSelectedIds(new Set())
+    setSelectionMode(false)
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return
+
+    setIsDeleting(true)
+    try {
+      const response = await fetch(`/api/projects/${projectId}/documents`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to delete documents')
+      }
+
+      toast({
+        title: 'Documents Deleted',
+        description: `Successfully deleted ${data.deleted} document${data.deleted !== 1 ? 's' : ''}.`,
+      })
+
+      setSelectedIds(new Set())
+      setSelectionMode(false)
+      setShowDeleteDialog(false)
+      router.refresh()
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to delete documents',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   return (
@@ -191,12 +271,47 @@ export function DocumentsView({
               for {projectName}
             </p>
           </div>
-          <Link href={`/projects/${projectId}/documents/new`}>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              New Document
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            {canDelete && documents.length > 0 && (
+              selectionMode ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={selectAll}>
+                    <CheckSquare className="h-4 w-4 mr-2" />
+                    Select All ({filteredDocs.length})
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={clearSelection}>
+                    <X className="h-4 w-4 mr-2" />
+                    Cancel
+                  </Button>
+                  {selectedIds.size > 0 && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setShowDeleteDialog(true)}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete ({selectedIds.size})
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSelectionMode(true)}
+                >
+                  <CheckSquare className="h-4 w-4 mr-2" />
+                  Select
+                </Button>
+              )
+            )}
+            <Link href={`/projects/${projectId}/documents/new`}>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                New Document
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {/* Search */}
@@ -242,6 +357,90 @@ export function DocumentsView({
             {filteredDocs.map((doc) => {
               const Icon = CATEGORY_ICONS[doc.category]
               const colorClass = CATEGORY_COLORS[doc.category]
+              const isSelected = selectedIds.has(doc.id)
+
+              const cardContent = (
+                <Card className={cn(
+                  "hover:border-primary/50 transition-colors cursor-pointer",
+                  isSelected && "border-primary bg-primary/5"
+                )}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3 min-w-0">
+                        {selectionMode && (
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleSelection(doc.id)}
+                            className="mt-1"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        )}
+                        <div
+                          className={cn(
+                            'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center',
+                            colorClass
+                          )}
+                        >
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-medium truncate">{doc.title}</h3>
+                            <Badge variant="secondary" className="text-xs">
+                              {DOCUMENT_CATEGORY_LABELS[doc.category]}
+                            </Badge>
+                          </div>
+                          {doc.description && (
+                            <p className="text-sm text-muted-foreground line-clamp-1 mt-0.5">
+                              {doc.description}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                            <span>
+                              Updated {formatRelativeTime(doc.updated_at)}
+                            </span>
+                            {doc.creator && (
+                              <>
+                                <span>•</span>
+                                <span>
+                                  by {doc.creator.full_name || doc.creator.email}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {doc.tags.length > 0 && (
+                            <div className="flex gap-1 mt-2">
+                              {doc.tags.slice(0, 3).map((tag) => (
+                                <Badge key={tag} variant="outline" className="text-xs">
+                                  {tag}
+                                </Badge>
+                              ))}
+                              {doc.tags.length > 3 && (
+                                <span className="text-xs text-muted-foreground">
+                                  +{doc.tags.length - 3}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+
+              if (selectionMode) {
+                return (
+                  <div
+                    key={doc.id}
+                    onClick={() => toggleSelection(doc.id)}
+                    className="block"
+                  >
+                    {cardContent}
+                  </div>
+                )
+              }
 
               return (
                 <Link
@@ -249,69 +448,35 @@ export function DocumentsView({
                   href={`/projects/${projectId}/documents/${doc.id}`}
                   className="block"
                 >
-                  <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3 min-w-0">
-                          <div
-                            className={cn(
-                              'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center',
-                              colorClass
-                            )}
-                          >
-                            <Icon className="h-5 w-5" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <h3 className="font-medium truncate">{doc.title}</h3>
-                              <Badge variant="secondary" className="text-xs">
-                                {DOCUMENT_CATEGORY_LABELS[doc.category]}
-                              </Badge>
-                            </div>
-                            {doc.description && (
-                              <p className="text-sm text-muted-foreground line-clamp-1 mt-0.5">
-                                {doc.description}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                              <span>
-                                Updated {formatRelativeTime(doc.updated_at)}
-                              </span>
-                              {doc.creator && (
-                                <>
-                                  <span>•</span>
-                                  <span>
-                                    by {doc.creator.full_name || doc.creator.email}
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                            {doc.tags.length > 0 && (
-                              <div className="flex gap-1 mt-2">
-                                {doc.tags.slice(0, 3).map((tag) => (
-                                  <Badge key={tag} variant="outline" className="text-xs">
-                                    {tag}
-                                  </Badge>
-                                ))}
-                                {doc.tags.length > 3 && (
-                                  <span className="text-xs text-muted-foreground">
-                                    +{doc.tags.length - 3}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-                      </div>
-                    </CardContent>
-                  </Card>
+                  {cardContent}
                 </Link>
               )
             })}
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} Document{selectedIds.size !== 1 ? 's' : ''}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The selected document{selectedIds.size !== 1 ? 's' : ''} will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

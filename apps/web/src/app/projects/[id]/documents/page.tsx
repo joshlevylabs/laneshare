@@ -42,8 +42,8 @@ export default async function DocumentsPage({
     redirect('/projects')
   }
 
-  // Fetch documents
-  let query = supabase
+  // Fetch all documents (category filtering is done client-side to preserve counts)
+  const { data: documents } = await supabase
     .from('documents')
     .select(`
       id,
@@ -66,16 +66,6 @@ export default async function DocumentsPage({
     `)
     .eq('project_id', params.id)
     .order('updated_at', { ascending: false })
-
-  if (searchParams.category) {
-    query = query.eq('category', searchParams.category)
-  }
-
-  if (searchParams.search) {
-    query = query.or(`title.ilike.%${searchParams.search}%,description.ilike.%${searchParams.search}%`)
-  }
-
-  const { data: documents } = await query
 
   // Transform to extract first creator from array (Supabase returns arrays for joins)
   const docsWithCreator = (documents || []).map((doc) => {

@@ -9,8 +9,20 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { RepoContextProvider, generateRepoFingerprint } from '@/lib/repo-context-provider'
-import { createClaudeRunner, type ValidatedClaudeOutput } from '@/lib/claude-code-runner'
-import type { RepoDocStatus, RepoDocBundleSummary, RepoDocCategory } from '@laneshare/shared'
+import { createClaudeRunner, type ValidatedClaudeOutput, type ClaudeRunnerProgress } from '@/lib/claude-code-runner'
+import { verifyDocumentation, type VerificationSummary, type DocPage } from '@/lib/doc-verification'
+import type { RepoDocStatus, RepoDocBundleSummary, RepoDocCategory, RepoContext } from '@laneshare/shared'
+
+// Progress info stored in the database for UI polling
+interface DocGenProgress {
+  stage: ClaudeRunnerProgress['stage']
+  message: string
+  pagesGenerated: number
+  round: number
+  maxRounds: number
+  continuationAttempt?: number
+  lastUpdated: string
+}
 
 const GenerateRequestSchema = z.object({
   force: z.boolean().optional().default(false),
@@ -182,12 +194,43 @@ async function runDocGeneration(
   fingerprint: string
 ) {
   const contextProvider = new RepoContextProvider(supabase)
-  const claudeRunner = createClaudeRunner()
 
+  let currentRound = 1
   let currentOutput: ValidatedClaudeOutput | undefined
   let allPages: ValidatedClaudeOutput['pages'] = []
   let allWarnings: string[] = []
   let allTasks: ValidatedClaudeOutput['tasks'] = []
+  let lastContext: RepoContext | undefined // Keep track of context for verification
+
+  // Helper to update progress in the database
+  const updateProgress = async (progress: Partial<DocGenProgress>) => {
+    const progressData: DocGenProgress = {
+      stage: progress.stage || 'starting',
+      message: progress.message || '',
+      pagesGenerated: progress.pagesGenerated ?? allPages.length,
+      round: currentRound,
+      maxRounds: MAX_ROUNDS,
+      continuationAttempt: progress.continuationAttempt,
+      lastUpdated: new Date().toISOString(),
+    }
+
+    await supabase
+      .from('repo_doc_bundles')
+      .update({ progress_json: progressData })
+      .eq('id', bundleId)
+  }
+
+  // Create runner with progress callback
+  const claudeRunner = createClaudeRunner({
+    onProgress: async (progress) => {
+      await updateProgress({
+        stage: progress.stage,
+        message: progress.message,
+        pagesGenerated: progress.pagesGenerated,
+        continuationAttempt: progress.continuationAttempt,
+      })
+    },
+  })
 
   try {
     // Update status to GENERATING
@@ -196,11 +239,24 @@ async function runDocGeneration(
       .update({ status: 'GENERATING' as RepoDocStatus })
       .eq('id', bundleId)
 
+    await updateProgress({
+      stage: 'starting',
+      message: 'Initializing documentation generation...',
+    })
+
     // Run up to MAX_ROUNDS
     for (let round = 1; round <= MAX_ROUNDS; round++) {
+      currentRound = round
       console.log(`[DocGen] Starting round ${round}/${MAX_ROUNDS} for bundle ${bundleId}`)
 
+      await updateProgress({
+        stage: 'calling_api',
+        message: `Round ${round}/${MAX_ROUNDS}: Building repository context...`,
+      })
+
       // Build context
+      console.log(`[DocGen] Building context for round ${round}...`)
+      const contextStartTime = Date.now()
       const context = await contextProvider.buildContext(
         repoId,
         userId,
@@ -208,9 +264,14 @@ async function runDocGeneration(
         MAX_ROUNDS,
         currentOutput?.needs_more_files || []
       )
+      lastContext = context // Save for verification
+      const contextElapsed = ((Date.now() - contextStartTime) / 1000).toFixed(1)
+      console.log(`[DocGen] Context built in ${contextElapsed}s. Key files: ${context.key_files.length}, Tree files: ${context.file_tree.length}`)
 
       // Run Claude Code
+      console.log(`[DocGen] Starting Claude API call for round ${round}...`)
       const result = await claudeRunner.run(context, currentOutput)
+      console.log(`[DocGen] Claude API call completed. Success: ${result.success}, Pages: ${result.output?.pages?.length || 0}`)
 
       if (!result.success || !result.output) {
         throw new Error(result.error || 'Claude Code execution failed')
@@ -224,6 +285,12 @@ async function runDocGeneration(
       if (result.output.tasks) {
         allTasks.push(...result.output.tasks)
       }
+
+      await updateProgress({
+        stage: 'parsing',
+        message: `Round ${round}/${MAX_ROUNDS}: Generated ${result.output.pages.length} pages (${allPages.length} total)`,
+        pagesGenerated: allPages.length,
+      })
 
       // Store raw output for debugging
       await supabase
@@ -240,6 +307,12 @@ async function runDocGeneration(
       console.log(`[DocGen] Claude Code requested ${result.needsMoreFiles.length} more files`)
     }
 
+    await updateProgress({
+      stage: 'complete',
+      message: `Verifying ${allPages.length} documentation pages...`,
+      pagesGenerated: allPages.length,
+    })
+
     // Deduplicate pages by slug (keep latest)
     const pageMap = new Map<string, ValidatedClaudeOutput['pages'][0]>()
     for (const page of allPages) {
@@ -247,13 +320,64 @@ async function runDocGeneration(
     }
     const uniquePages = Array.from(pageMap.values())
 
-    // Save pages to database
+    // Run verification against actual file contents
+    let verificationSummary: VerificationSummary | undefined
+    if (lastContext) {
+      console.log(`[DocGen] Running verification on ${uniquePages.length} pages...`)
+      const docPages: DocPage[] = uniquePages.map(p => ({
+        category: p.category,
+        slug: p.slug,
+        title: p.title,
+        markdown: p.markdown,
+        evidence: p.evidence,
+      }))
+
+      verificationSummary = verifyDocumentation(
+        docPages,
+        lastContext.key_files,
+        lastContext.file_tree
+      )
+
+      console.log(`[DocGen] Verification complete: ${verificationSummary.overall_score}% score, ${verificationSummary.needs_review} pages need review`)
+
+      // Add verification warnings to allWarnings
+      for (const pageResult of verificationSummary.pages) {
+        for (const issue of pageResult.issues) {
+          if (issue.severity === 'error') {
+            allWarnings.push(`[${pageResult.title}] ${issue.message}`)
+          }
+        }
+      }
+    }
+
+    await updateProgress({
+      stage: 'complete',
+      message: `Saving ${uniquePages.length} documentation pages...`,
+      pagesGenerated: uniquePages.length,
+    })
+
+    // Save pages to database with verification results
     let needsReviewCount = 0
     for (const page of uniquePages) {
-      const needsReview = page.markdown.includes('[Needs Review]') ||
-                         page.evidence.length === 0
+      // Get verification result for this page
+      const pageVerification = verificationSummary?.pages.find(p => p.slug === page.slug)
+
+      // Determine if needs review based on verification
+      const needsReview = pageVerification?.needs_review ??
+                         (page.markdown.includes('[Needs Review]') || page.evidence.length === 0)
 
       if (needsReview) needsReviewCount++
+
+      // Include verification issues in evidence_json
+      const evidenceWithVerification = {
+        items: page.evidence,
+        verification: pageVerification ? {
+          score: pageVerification.verification_score,
+          verified_count: pageVerification.verified_count,
+          total_count: pageVerification.total_evidence,
+          issues: pageVerification.issues,
+        } : undefined,
+      }
 
       await supabase
         .from('repo_doc_pages')
@@ -265,7 +389,7 @@ async function runDocGeneration(
           slug: page.slug,
           title: page.title,
           markdown: page.markdown,
-          evidence_json: page.evidence,
+          evidence_json: evidenceWithVerification,
           needs_review: needsReview,
         })
     }
@@ -298,12 +422,19 @@ async function runDocGeneration(
       warnings: allWarnings,
       tech_stack: currentOutput?.repo_summary.tech_stack || [],
       entrypoints: currentOutput?.repo_summary.entrypoints || [],
+      // Include verification summary
+      verification: verificationSummary ? {
+        overall_score: verificationSummary.overall_score,
+        verified_evidence: verificationSummary.verified_evidence,
+        total_evidence: verificationSummary.total_evidence,
+        fully_verified_pages: verificationSummary.fully_verified,
+      } : undefined,
     }
 
     // Determine final status
     const finalStatus: RepoDocStatus = needsReviewCount > 0 ? 'NEEDS_REVIEW' : 'READY'
 
-    // Update bundle
+    // Update bundle (clear progress_json on completion)
     await supabase
       .from('repo_doc_bundles')
       .update({
@@ -311,6 +442,7 @@ async function runDocGeneration(
         generated_at: new Date().toISOString(),
         summary_json: summary,
         source_fingerprint: fingerprint,
+        progress_json: null, // Clear progress on completion
       })
       .eq('id', bundleId)
 
@@ -339,12 +471,20 @@ async function runDocGeneration(
       errorMessage = 'Access to repository denied. You may need to grant additional permissions.'
     }
 
+    // Update progress with error state
+    await updateProgress({
+      stage: 'error',
+      message: errorMessage,
+      pagesGenerated: allPages.length,
+    })
+
     // Update bundle with error
     await supabase
       .from('repo_doc_bundles')
       .update({
         status: 'ERROR' as RepoDocStatus,
         error: errorMessage,
+        progress_json: null, // Clear progress on error
       })
       .eq('id', bundleId)
 

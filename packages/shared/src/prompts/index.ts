@@ -12,6 +12,12 @@ export * from './context-ai'
 // Re-export repo documentation prompts (Claude Code wrapper)
 export * from './repo-docs'
 
+// Re-export implementation agent prompts
+export * from './implementation-agent'
+
+// Re-export integrator agent prompts (collaborative editing)
+export * from './integrator-agent'
+
 export interface LanePilotContext {
   task?: Task
   projectName: string

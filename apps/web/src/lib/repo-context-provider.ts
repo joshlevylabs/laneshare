@@ -21,13 +21,13 @@ import type {
 // ===========================================
 
 /** Maximum number of key files to fetch per round */
-const MAX_KEY_FILES_PER_ROUND = 20
+const MAX_KEY_FILES_PER_ROUND = 5 // Fewer files = faster API response
 
 /** Maximum total content size per round (in characters) */
-const MAX_CONTENT_SIZE = 100000 // ~100KB
+const MAX_CONTENT_SIZE = 20000 // ~20KB per round
 
 /** Maximum size for a single file */
-const MAX_SINGLE_FILE_SIZE = 30000 // ~30KB
+const MAX_SINGLE_FILE_SIZE = 8000 // ~8KB - reduced for faster API response
 
 /** File extensions to include in the tree */
 const INCLUDE_EXTENSIONS = new Set([

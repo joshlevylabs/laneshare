@@ -42,7 +42,9 @@ import {
   ChevronRight,
   ArrowUp,
   ArrowDown,
+  Bot,
 } from 'lucide-react'
+import Link from 'next/link'
 import { SELECT_SENTINELS, assigneeSelect, sprintSelect, TASK_TYPE_HIERARCHY, VALID_PARENT_TYPES } from '@laneshare/shared'
 import type { Task, Sprint, TaskComment, TaskActivity, TaskType, TaskStatus, TaskPriority, TaskLinkedContext, ContextSuggestionType, HierarchyLevel, TaskSummary } from '@laneshare/shared'
 import { TaskContextFields } from './task-context-fields'
@@ -585,19 +587,31 @@ export function TaskDetailModal({
                 <Copy className="h-3 w-3" />
               </button>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="text-destructive hover:text-destructive"
-            >
-              {isDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+              >
+                <Link href={`/projects/${projectId}/tasks/${task.id}/implement`}>
+                  <Bot className="h-4 w-4 mr-2" />
+                  AI Implement
+                </Link>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="text-destructive hover:text-destructive"
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           </div>
           <DialogTitle className="text-left mt-2">
             {isEditing ? (

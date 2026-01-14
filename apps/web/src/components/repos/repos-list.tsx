@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { formatRelativeTime } from '@laneshare/shared'
 import { Progress } from '@/components/ui/progress'
-import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink, Bell, BellOff, FileText, Sparkles, CheckCircle, AlertCircle } from 'lucide-react'
+import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink, Bell, BellOff, FileText, Sparkles, CheckCircle, AlertCircle, X, AlertTriangle } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -55,6 +55,16 @@ interface SyncProgress {
   stage: string | null
 }
 
+interface DocGenProgress {
+  stage: 'starting' | 'calling_api' | 'parsing' | 'continuation' | 'complete' | 'error'
+  message: string
+  pagesGenerated: number
+  round: number
+  maxRounds: number
+  continuationAttempt?: number
+  lastUpdated?: string
+}
+
 export function ReposList({ repos, projectId }: ReposListProps) {
   const { toast } = useToast()
   const router = useRouter()
@@ -62,7 +72,75 @@ export function ReposList({ repos, projectId }: ReposListProps) {
   const [deletingRepos, setDeletingRepos] = useState<Set<string>>(new Set())
   const [togglingAutoSync, setTogglingAutoSync] = useState<Set<string>>(new Set())
   const [generatingDocs, setGeneratingDocs] = useState<Set<string>>(new Set())
+  const [cancellingDocs, setCancellingDocs] = useState<Set<string>>(new Set())
   const [repoProgress, setRepoProgress] = useState<Record<string, SyncProgress>>({})
+  const [docGenProgress, setDocGenProgress] = useState<Record<string, DocGenProgress>>({})
+
+  // Check if progress is stale (no update for more than 2 minutes)
+  const isProgressStale = (progress: DocGenProgress | undefined): boolean => {
+    if (!progress?.lastUpdated) return false
+    const lastUpdate = new Date(progress.lastUpdated).getTime()
+    const now = Date.now()
+    return now - lastUpdate > 2 * 60 * 1000 // 2 minutes
+  }
+
+  // Poll for progress on repos that are already generating
+  const pollGeneratingRepo = useCallback(async (repoId: string, bundleId: string | null) => {
+    if (!bundleId) return
+
+    try {
+      const [statusRes, bundleRes] = await Promise.all([
+        fetch(`/api/repos/${repoId}`),
+        fetch(`/api/projects/${projectId}/repos/${repoId}/docs/bundles/${bundleId}`),
+      ])
+
+      if (statusRes.ok) {
+        const repo = await statusRes.json()
+
+        // Update progress from bundle if available
+        if (bundleRes.ok) {
+          const bundle = await bundleRes.json()
+          if (bundle.progress_json) {
+            setDocGenProgress((prev) => ({
+              ...prev,
+              [repoId]: bundle.progress_json,
+            }))
+          }
+        }
+
+        // Check if still generating
+        if (repo.doc_status === 'GENERATING') {
+          setTimeout(() => pollGeneratingRepo(repoId, bundleId), 2000)
+        } else {
+          // Generation finished - clear state and refresh
+          setGeneratingDocs((prev) => {
+            const next = new Set(prev)
+            next.delete(repoId)
+            return next
+          })
+          setDocGenProgress((prev) => {
+            const next = { ...prev }
+            delete next[repoId]
+            return next
+          })
+          router.refresh()
+        }
+      }
+    } catch (error) {
+      console.error('Error polling repo status:', error)
+    }
+  }, [projectId, router])
+
+  // Start polling for repos that are already in GENERATING state on mount
+  useEffect(() => {
+    repos.forEach((repo) => {
+      if (repo.doc_status === 'GENERATING' && repo.doc_bundle_id && !generatingDocs.has(repo.id)) {
+        // Add to generating set and start polling
+        setGeneratingDocs((prev) => new Set(prev).add(repo.id))
+        pollGeneratingRepo(repo.id, repo.doc_bundle_id)
+      }
+    })
+  }, [repos, pollGeneratingRepo, generatingDocs])
 
   const getStageLabel = (stage: string | null): string => {
     switch (stage) {
@@ -74,6 +152,26 @@ export function ReposList({ repos, projectId }: ReposListProps) {
         return 'Generating embeddings...'
       default:
         return 'Syncing...'
+    }
+  }
+
+  const getDocStageLabel = (progress: DocGenProgress | undefined): string => {
+    if (!progress) return 'Generating documentation...'
+    switch (progress.stage) {
+      case 'starting':
+        return 'Initializing...'
+      case 'calling_api':
+        return `Round ${progress.round}/${progress.maxRounds}: Analyzing repository...`
+      case 'parsing':
+        return `Round ${progress.round}/${progress.maxRounds}: Processing response...`
+      case 'continuation':
+        return `Continuation ${progress.continuationAttempt}: Generating more pages...`
+      case 'complete':
+        return 'Saving documentation...'
+      case 'error':
+        return 'Error occurred'
+      default:
+        return progress.message || 'Generating documentation...'
     }
   }
 
@@ -229,14 +327,14 @@ export function ReposList({ repos, projectId }: ReposListProps) {
     }
   }
 
-  const handleGenerateDocs = async (repoId: string) => {
+  const handleGenerateDocs = async (repoId: string, force: boolean = false) => {
     setGeneratingDocs((prev) => new Set(prev).add(repoId))
 
     try {
       const response = await fetch(`/api/projects/${projectId}/repos/${repoId}/docs/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: false }),
+        body: JSON.stringify({ force }),
       })
 
       const data = await response.json()
@@ -261,15 +359,39 @@ export function ReposList({ repos, projectId }: ReposListProps) {
           description: 'Documentation generation is in progress. This may take a few minutes.',
         })
 
-        // Poll for completion
+        // Poll for completion and progress
         const checkStatus = async () => {
-          const statusRes = await fetch(`/api/repos/${repoId}`)
+          // Fetch both repo status and bundle progress
+          const [statusRes, bundleRes] = await Promise.all([
+            fetch(`/api/repos/${repoId}`),
+            data.bundle_id
+              ? fetch(`/api/projects/${projectId}/repos/${repoId}/docs/bundles/${data.bundle_id}`)
+              : Promise.resolve(null),
+          ])
+
           if (statusRes.ok) {
             const repo = await statusRes.json()
+
+            // Update progress from bundle if available
+            if (bundleRes && bundleRes.ok) {
+              const bundle = await bundleRes.json()
+              if (bundle.progress_json) {
+                setDocGenProgress((prev) => ({
+                  ...prev,
+                  [repoId]: bundle.progress_json,
+                }))
+              }
+            }
+
             if (repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW' || repo.doc_status === 'ERROR') {
               setGeneratingDocs((prev) => {
                 const next = new Set(prev)
                 next.delete(repoId)
+                return next
+              })
+              setDocGenProgress((prev) => {
+                const next = { ...prev }
+                delete next[repoId]
                 return next
               })
               router.refresh()
@@ -289,7 +411,7 @@ export function ReposList({ repos, projectId }: ReposListProps) {
               return
             }
           }
-          setTimeout(checkStatus, 3000)
+          setTimeout(checkStatus, 2000) // Poll more frequently for progress updates
         }
         checkStatus()
       }
@@ -303,6 +425,53 @@ export function ReposList({ repos, projectId }: ReposListProps) {
         variant: 'destructive',
         title: 'Error',
         description: error instanceof Error ? error.message : 'Failed to generate documentation',
+      })
+    }
+  }
+
+  const handleCancelDocs = async (repoId: string) => {
+    setCancellingDocs((prev) => new Set(prev).add(repoId))
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/repos/${repoId}/docs/cancel`, {
+        method: 'POST',
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to cancel documentation generation')
+      }
+
+      // Clear local state
+      setGeneratingDocs((prev) => {
+        const next = new Set(prev)
+        next.delete(repoId)
+        return next
+      })
+      setDocGenProgress((prev) => {
+        const next = { ...prev }
+        delete next[repoId]
+        return next
+      })
+
+      toast({
+        title: 'Generation Cancelled',
+        description: 'Documentation generation has been stopped.',
+      })
+
+      router.refresh()
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to cancel',
+      })
+    } finally {
+      setCancellingDocs((prev) => {
+        const next = new Set(prev)
+        next.delete(repoId)
+        return next
       })
     }
   }
@@ -415,6 +584,71 @@ export function ReposList({ repos, projectId }: ReposListProps) {
                 </div>
               )}
 
+              {/* Progress bar when generating docs */}
+              {(generatingDocs.has(repo.id) || repo.doc_status === 'GENERATING') && (
+                <div className="space-y-2 bg-gray-50 dark:bg-gray-900/50 p-3 rounded-md border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                      {getDocStageLabel(docGenProgress[repo.id])}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {docGenProgress[repo.id]?.pagesGenerated !== undefined && docGenProgress[repo.id].pagesGenerated > 0 && (
+                        <Badge variant="secondary" className="text-xs">
+                          {docGenProgress[repo.id].pagesGenerated} pages
+                        </Badge>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                        onClick={() => handleCancelDocs(repo.id)}
+                        disabled={cancellingDocs.has(repo.id)}
+                        title="Cancel generation"
+                      >
+                        {cancellingDocs.has(repo.id) ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <X className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  {/* Stale progress warning */}
+                  {isProgressStale(docGenProgress[repo.id]) && (
+                    <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
+                      <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                      <span>Progress appears stale. The process may have stopped.</span>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 text-xs text-amber-700 dark:text-amber-300 underline"
+                        onClick={() => handleCancelDocs(repo.id)}
+                      >
+                        Cancel and retry
+                      </Button>
+                    </div>
+                  )}
+                  {docGenProgress[repo.id]?.message && !isProgressStale(docGenProgress[repo.id]) && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      {docGenProgress[repo.id].message}
+                    </p>
+                  )}
+                  {/* Progress indicator - indeterminate animated bar */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-purple-500 rounded-full animate-progress-indeterminate"
+                        style={{ width: '30%' }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap font-medium">
+                      Round {docGenProgress[repo.id]?.round || 1}/{docGenProgress[repo.id]?.maxRounds || 3}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1">
                   <div className="text-sm text-muted-foreground">
@@ -484,25 +718,46 @@ export function ReposList({ repos, projectId }: ReposListProps) {
                         </Button>
                       )}
 
-                      {/* View Docs button - when docs are ready */}
+                      {/* View Docs and Regenerate buttons - when docs are ready */}
                       {(repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW') && (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          onClick={() => router.push(`/projects/${projectId}/repos/${repo.id}/docs`)}
-                        >
-                          {repo.doc_status === 'NEEDS_REVIEW' ? (
-                            <>
-                              <AlertCircle className="mr-2 h-4 w-4" />
-                              Review Docs
-                            </>
-                          ) : (
-                            <>
-                              <FileText className="mr-2 h-4 w-4" />
-                              View Docs
-                            </>
-                          )}
-                        </Button>
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleGenerateDocs(repo.id, true)}
+                            disabled={generatingDocs.has(repo.id)}
+                            title="Regenerate documentation from scratch"
+                          >
+                            {generatingDocs.has(repo.id) ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Regenerating...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                                Regenerate
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => router.push(`/projects/${projectId}/repos/${repo.id}/docs`)}
+                          >
+                            {repo.doc_status === 'NEEDS_REVIEW' ? (
+                              <>
+                                <AlertCircle className="mr-2 h-4 w-4" />
+                                Review Docs
+                              </>
+                            ) : (
+                              <>
+                                <FileText className="mr-2 h-4 w-4" />
+                                View Docs
+                              </>
+                            )}
+                          </Button>
+                        </>
                       )}
                     </>
                   )}

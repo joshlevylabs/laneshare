@@ -5,13 +5,16 @@ import { useRouter } from 'next/navigation'
 import {
   DndContext,
   DragOverlay,
-  closestCenter,
+  pointerWithin,
+  rectIntersection,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   DragStartEvent,
   DragEndEvent,
+  CollisionDetection,
+  getFirstCollision,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -487,6 +490,23 @@ export function TaskBacklogView({
     })
   )
 
+  // Custom collision detection that prioritizes droppable containers
+  const collisionDetection: CollisionDetection = (args) => {
+    // First, check if pointer is within any droppable
+    const pointerCollisions = pointerWithin(args)
+
+    // Find the first container (sprint or backlog) collision
+    const containerIds = ['backlog', ...sprints.map(s => s.id)]
+    const containerCollision = pointerCollisions.find(c => containerIds.includes(c.id as string))
+
+    if (containerCollision) {
+      return [containerCollision]
+    }
+
+    // Fall back to rect intersection for other cases
+    return rectIntersection(args)
+  }
+
   // Group tasks by sprint
   const backlogTasks = tasks
     .filter((t) => t.sprint_id === null || t.status === 'BACKLOG')
@@ -506,12 +526,20 @@ export function TaskBacklogView({
     const { active, over } = event
     setActiveTask(null)
 
-    if (!over) return
+    if (!over) {
+      console.log('[DnD] No drop target')
+      return
+    }
 
     const taskId = active.id as string
     const overId = over.id as string
     const task = tasks.find((t) => t.id === taskId)
-    if (!task) return
+    if (!task) {
+      console.log('[DnD] Task not found:', taskId)
+      return
+    }
+
+    console.log('[DnD] Dropping task', task.key, 'onto', overId)
 
     // Determine target sprint ID
     let targetSprintId: string | null = null
@@ -519,24 +547,50 @@ export function TaskBacklogView({
     // Check if dropped on a sprint section (or backlog)
     if (overId === 'backlog') {
       targetSprintId = null
+      console.log('[DnD] Target: backlog')
     } else if (sprints.some((s) => s.id === overId)) {
       targetSprintId = overId
+      console.log('[DnD] Target: sprint', overId)
     } else {
       // Dropped on another task - find which sprint that task is in
       const overTask = tasks.find((t) => t.id === overId)
       if (overTask) {
         targetSprintId = overTask.sprint_id || null
+        console.log('[DnD] Target: task in sprint', targetSprintId)
       } else {
+        console.log('[DnD] Invalid drop target:', overId)
         return // Invalid drop target
       }
     }
 
-    // If same sprint, no change needed
-    if (task.sprint_id === targetSprintId) return
+    // Normalize undefined to null for comparison
+    const currentSprintId = task.sprint_id || null
+
+    // Determine if we need to change status (BACKLOG -> TODO when adding to sprint)
+    const needsStatusChange = task.status === 'BACKLOG' && targetSprintId !== null
+    const newStatus = needsStatusChange ? 'TODO' : task.status
+
+    // If same sprint AND no status change needed, no update required
+    if (currentSprintId === targetSprintId && !needsStatusChange) {
+      console.log('[DnD] Same sprint, no change needed')
+      return
+    }
+
+    console.log('[DnD] Moving task from', currentSprintId, 'to', targetSprintId, needsStatusChange ? '(also changing status to TODO)' : '')
 
     // Optimistic update
-    const updatedTask = { ...task, sprint_id: targetSprintId || undefined }
+    const updatedTask = {
+      ...task,
+      sprint_id: targetSprintId || undefined,
+      status: newStatus as Task['status']
+    }
     onTaskUpdate(updatedTask)
+
+    // Build update payload
+    const updatePayload: { sprint_id: string | null; status?: string } = { sprint_id: targetSprintId }
+    if (needsStatusChange) {
+      updatePayload.status = 'TODO'
+    }
 
     try {
       const response = await fetch(
@@ -544,7 +598,7 @@ export function TaskBacklogView({
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sprint_id: targetSprintId }),
+          body: JSON.stringify(updatePayload),
         }
       )
 
@@ -677,7 +731,7 @@ export function TaskBacklogView({
 
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >

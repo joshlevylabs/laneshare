@@ -12,12 +12,56 @@ import type { RepoContext, RepoDocCategory } from '../types'
  */
 export const REPO_DOC_SYSTEM_PROMPT = `You are Claude Code, an expert documentation generator. Your task is to analyze a GitHub repository and produce comprehensive, well-structured documentation.
 
-CRITICAL RULES:
+CRITICAL RULES - READ CAREFULLY:
 1. Output ONLY valid JSON - no prose, comments, or markdown outside the JSON structure.
 2. Every major claim MUST have at least one evidence item with file_path, excerpt (≤15 lines, ≤1200 chars), and reason.
 3. If you cannot provide evidence for a claim, mark that section with "**[Needs Review]**" and include a warning.
 4. Be accurate and grounded - do not hallucinate features, files, or capabilities that aren't evident in the code.
 5. Focus on practical, actionable documentation that helps developers understand and work with the codebase.
+
+====================================================================
+CRITICAL ANTI-HALLUCINATION RULES - FAILURE TO FOLLOW = INVALID OUTPUT
+====================================================================
+
+⚠️ MOST IMPORTANT RULE - IGNORE THE REPOSITORY NAME:
+- DO NOT infer what the application does from its name.
+- The repository name is JUST A LABEL - it tells you NOTHING about functionality.
+- A repo named "LaneShare" might be a code collaboration tool, NOT a lane/parking sharing app.
+- A repo named "CloudKitchen" might be a database library, NOT a food delivery app.
+- ONLY determine purpose by reading the ACTUAL CODE provided below.
+
+⚠️ DERIVE UNDERSTANDING ONLY FROM PROVIDED CODE:
+- Read the package.json dependencies to understand the tech stack.
+- Read the actual source files to understand what the code does.
+- Look at component names, function names, API routes, and database schemas.
+- If a file contains "ProjectSidebar", "ReposList", "TaskBoard" - document THOSE features.
+- If a file imports "@supabase/supabase-js" - the app uses Supabase, not a custom database.
+
+⚠️ EVIDENCE-FIRST DOCUMENTATION:
+- Before writing ANY feature description, find the code that implements it.
+- If you cannot point to specific code, the feature DOES NOT EXIST.
+- Every feature claim must cite actual function names, component names, or API routes from the provided files.
+- Do NOT describe features based on what "makes sense" or what you "expect" - only what you SEE.
+
+⚠️ WHEN IN DOUBT, SAY "I DON'T KNOW":
+- If the provided files don't clearly show a feature, mark it [Needs Review].
+- It is better to have incomplete documentation than WRONG documentation.
+- Wrong documentation is worse than no documentation.
+
+ANTI-HALLUCINATION CHECKLIST (verify before each claim):
+□ Can I point to a specific file and line that proves this?
+□ Am I describing what the code DOES, not what the name SUGGESTS?
+□ Did I copy the evidence VERBATIM from the provided files?
+□ Would a developer reading the actual code agree with my description?
+□ Am I making zero assumptions based on the project/repo name?
+
+- ONLY document what you can SEE in the provided files. Do not assume or infer functionality that isn't explicitly shown.
+- Evidence excerpts MUST be EXACT copies from the provided file contents. Do not paraphrase or modify code snippets.
+- If you're unsure about something, say so with "[Needs Review]" rather than guessing.
+- Do NOT make up file paths, function names, or code that wasn't provided.
+- Do NOT assume typical patterns exist unless you see them in the actual code.
+- When documenting features, only describe what the code actually does, not what it "probably" does.
+- If a file wasn't provided, do not create evidence from it - instead note it as a gap.
 
 OUTPUT FORMAT:
 Return a single JSON object with this exact structure:
@@ -59,6 +103,8 @@ Generate comprehensive documentation for the following repository:
 - **Branch**: ${context.default_branch}
 - **Total Files**: ${context.total_files}
 - **Round**: ${context.round}/${context.max_rounds}
+
+⚠️ CRITICAL REMINDER: The repository name "${context.repo_name}" is JUST A LABEL. DO NOT use the name to guess what the application does. Read the actual code files below to understand the application's purpose and features. The name could be completely unrelated to the actual functionality.
 `)
 
   // File tree section
@@ -104,9 +150,14 @@ Generate the following documentation pages. If you lack sufficient context for a
 3. **api/auth** - Authentication and authorization mechanisms
 4. **api/errors-and-status-codes** - Error handling patterns and status codes
 
-### FEATURES (Required)
+### FEATURES (Required) - MUST BE DERIVED FROM CODE, NOT THE REPO NAME
 1. **features/index** - Overview of major features with confidence levels
+   - List ONLY features you can see implemented in the provided code
+   - Each feature MUST reference specific components, functions, or API routes
+   - DO NOT invent features based on what the repo name suggests
 2. **features/[feature-name]** - One page per major feature (top 3-5 features)
+   - Feature names should match actual component/module names in the code
+   - E.g., if you see "TaskBoard.tsx", document "Task Management", not made-up features
 
 ### RUNBOOK (Required)
 1. **runbook/local-dev** - Local development setup instructions
@@ -117,18 +168,25 @@ Generate the following documentation pages. If you lack sufficient context for a
 `)
 
   // Evidence requirements
-  parts.push(`## Evidence Requirements
+  parts.push(`## Evidence Requirements (CRITICAL)
 
 For EVERY major claim or fact in your documentation:
 1. Include an evidence item with:
-   - \`file_path\`: The path to the source file
-   - \`excerpt\`: The relevant code snippet (≤15 lines, ≤1200 characters)
+   - \`file_path\`: The EXACT path from the provided files (must match exactly)
+   - \`excerpt\`: VERBATIM code copied from the provided file (≤15 lines, ≤1200 characters)
    - \`reason\`: Why this evidence supports the claim
+
+IMPORTANT - Evidence Quality Rules:
+- Excerpts must be EXACT copies, not paraphrased or modified
+- File paths must match files that were provided to you
+- Do NOT fabricate evidence - if you can't cite real code, mark it [Needs Review]
+- Your documentation will be AUTOMATICALLY VERIFIED against actual files
 
 If you cannot find evidence:
 - Mark the section with "**[Needs Review]**"
 - Add a warning explaining what evidence is missing
 - Still include the documentation with your best understanding
+- Note: Pages without valid evidence will be flagged for manual review
 `)
 
   // Request more files if needed
@@ -156,6 +214,12 @@ Remember:
 - Markdown should be well-formatted with headers, code blocks, and lists
 - Evidence excerpts must be actual code from the provided files
 - If uncertain, add warnings and "[Needs Review]" markers rather than guessing
+
+⚠️ FINAL CHECK BEFORE OUTPUT:
+1. Did you base your documentation on the ACTUAL CODE FILES provided above?
+2. Did you IGNORE the repository name when determining what the app does?
+3. Does every feature you documented have evidence from the actual code?
+4. If a developer reads your docs and looks at the code, will they match?
 `)
 
   return parts.join('\n')
@@ -305,6 +369,16 @@ export function getFilePriority(path: string): number {
     return 100
   }
 
+  // High priority: Prisma schema (critical for data model documentation)
+  if (lowerPath.endsWith('schema.prisma') || lowerPath.endsWith('prisma/schema.prisma')) {
+    return 95
+  }
+
+  // High priority: Database migrations (newest first for schema understanding)
+  if ((lowerPath.includes('migrations/') || lowerPath.includes('supabase/')) && lowerPath.endsWith('.sql')) {
+    return 85
+  }
+
   // High priority: entry points
   if (KEY_FILE_PATTERNS.entrypoints.some(p => lowerPath.endsWith(p.toLowerCase()))) {
     return 80
@@ -325,7 +399,7 @@ export function getFilePriority(path: string): number {
     return 50
   }
 
-  // Medium priority: database
+  // Medium priority: database config (drizzle, etc.)
   if (KEY_FILE_PATTERNS.database.some(p => lowerPath.includes(p.toLowerCase()))) {
     return 50
   }
@@ -382,17 +456,24 @@ Pay special attention to:
 - Pagination patterns`,
 
   FEATURE: `Focus on generating Feature documentation:
-- Identify major user-facing features
-- Document each feature's purpose and behavior
-- Include code paths and key files
-- Note dependencies between features
-- Highlight configuration options
+
+⚠️ CRITICAL: Features must be discovered from CODE, not guessed from the repository name!
+- Look at actual component files (*.tsx, *.ts) to find features
+- Look at API route files to understand what operations are supported
+- Look at database schemas to understand the data model
+- The feature list should match what you SEE in the code, not what the name suggests
+
+- Identify major user-facing features BY READING THE CODE
+- Document each feature's purpose and behavior BASED ON CODE EVIDENCE
+- Include code paths and key files (with REAL file paths from the repo)
+- Note dependencies between features (that you can SEE in imports)
+- Highlight configuration options (that EXIST in config files)
 
 Pay special attention to:
-- User workflows and journeys
-- Feature flags or toggles
-- Integration points
-- Known limitations`,
+- Component names in /components folders - these reveal actual features
+- API routes in /api folders - these show what operations exist
+- Database tables and schemas - these show what data is managed
+- Package.json dependencies - these reveal the tech stack`,
 
   RUNBOOK: `Focus on generating Runbook/Operations documentation:
 - Local development setup
@@ -406,6 +487,50 @@ Pay special attention to:
 - Database setup and migrations
 - CI/CD pipeline steps
 - Common issues and solutions`,
+}
+
+/**
+ * Build a continuation prompt when the previous response was truncated
+ * This asks Claude to continue generating pages from where it left off
+ */
+export function buildRepoDocContinuationPrompt(
+  context: RepoContext,
+  completedPages: Array<{ category: string; slug: string; title: string }>,
+  partialPageInfo?: { category: string; slug: string; title: string }
+): string {
+  const parts: string[] = []
+
+  parts.push(`# Continuation: Complete Documentation Generation
+
+You were generating documentation for ${context.repo_owner}/${context.repo_name} but the response was truncated.
+
+⚠️ REMINDER: Continue to base ALL documentation on the actual code files, NOT the repository name. The repo name is just a label and tells you nothing about the app's functionality.
+
+## Already Completed Pages
+The following pages have been successfully generated and saved:
+${completedPages.length > 0 ? completedPages.map(p => `- ${p.category}/${p.slug}: "${p.title}"`).join('\n') : '(none yet)'}
+
+${partialPageInfo ? `## Partial Page (discard and regenerate)
+The following page was partially generated and needs to be regenerated:
+- ${partialPageInfo.category}/${partialPageInfo.slug}: "${partialPageInfo.title}"
+` : ''}
+
+## Task
+Continue generating the remaining documentation pages. Do NOT regenerate pages that are already completed above.
+
+Focus on generating the pages that haven't been completed yet from this list:
+- architecture/overview, architecture/tech-stack, architecture/services-and-integrations, architecture/data-model, architecture/deployment, architecture/decisions
+- api/overview, api/endpoints, api/auth, api/errors-and-status-codes
+- features/index, features/[feature-specific pages]
+- runbook/local-dev, runbook/deployments, runbook/observability, runbook/troubleshooting, runbook/security
+
+Return a JSON object with the same structure as before, but ONLY include pages you are generating in this continuation.
+Include the repo_summary, warnings array, and any needs_more_files if applicable.
+
+IMPORTANT: Output ONLY valid JSON. Start your response with \`{\` and ensure it ends with \`}\`.
+`)
+
+  return parts.join('\n')
 }
 
 /**

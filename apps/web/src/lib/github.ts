@@ -58,6 +58,66 @@ export interface GitHubWebhook {
   }
 }
 
+export interface GitHubCodespace {
+  id: number
+  name: string
+  display_name: string | null
+  state: 'Unknown' | 'Created' | 'Queued' | 'Provisioning' | 'Available' | 'Awaiting' | 'Unavailable' | 'Deleted' | 'Moved' | 'Shutdown' | 'Archived' | 'Starting' | 'ShuttingDown' | 'Failed' | 'Exporting' | 'Updating' | 'Rebuilding'
+  owner: {
+    login: string
+  }
+  repository: {
+    id: number
+    full_name: string
+    owner: {
+      login: string
+    }
+    name: string
+  }
+  machine: {
+    name: string
+    display_name: string
+    operating_system: string
+    storage_in_bytes: number
+    memory_in_bytes: number
+    cpus: number
+  } | null
+  created_at: string
+  updated_at: string
+  last_used_at: string
+  web_url: string
+  machines_url: string
+  git_status: {
+    ahead: number
+    behind: number
+    has_unpushed_changes: boolean
+    has_uncommitted_changes: boolean
+    ref: string
+  }
+  location: string
+  idle_timeout_minutes: number
+  retention_period_minutes: number | null
+}
+
+export interface GitHubCodespaceMachine {
+  name: string
+  display_name: string
+  operating_system: string
+  storage_in_bytes: number
+  memory_in_bytes: number
+  cpus: number
+  prebuild_availability: 'none' | 'ready' | 'in_progress'
+}
+
+export interface CreateCodespaceOptions {
+  ref?: string
+  machine?: string
+  location?: string
+  idle_timeout_minutes?: number
+  display_name?: string
+  working_directory?: string
+}
+
 export class GitHubClient {
   private token: string
   private baseUrl = 'https://api.github.com'
@@ -196,6 +256,95 @@ export class GitHubClient {
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
       },
+    })
+  }
+
+  // ===== Codespaces API =====
+
+  /**
+   * List all codespaces for the authenticated user
+   */
+  async listCodespaces(): Promise<{ total_count: number; codespaces: GitHubCodespace[] }> {
+    return this.request('/user/codespaces')
+  }
+
+  /**
+   * List codespaces for a specific repository
+   */
+  async listRepoCodespaces(owner: string, repo: string): Promise<{ total_count: number; codespaces: GitHubCodespace[] }> {
+    return this.request(`/repos/${owner}/${repo}/codespaces`)
+  }
+
+  /**
+   * Get a specific codespace by name
+   */
+  async getCodespace(codespaceName: string): Promise<GitHubCodespace> {
+    return this.request(`/user/codespaces/${codespaceName}`)
+  }
+
+  /**
+   * Create a new codespace for a repository
+   */
+  async createCodespace(owner: string, repo: string, options: CreateCodespaceOptions = {}): Promise<GitHubCodespace> {
+    return this.request(`/repos/${owner}/${repo}/codespaces`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ref: options.ref,
+        machine: options.machine,
+        location: options.location,
+        idle_timeout_minutes: options.idle_timeout_minutes,
+        display_name: options.display_name,
+        working_directory: options.working_directory,
+      }),
+    })
+  }
+
+  /**
+   * Start a stopped codespace
+   */
+  async startCodespace(codespaceName: string): Promise<GitHubCodespace> {
+    return this.request(`/user/codespaces/${codespaceName}/start`, {
+      method: 'POST',
+    })
+  }
+
+  /**
+   * Stop a running codespace
+   */
+  async stopCodespace(codespaceName: string): Promise<GitHubCodespace> {
+    return this.request(`/user/codespaces/${codespaceName}/stop`, {
+      method: 'POST',
+    })
+  }
+
+  /**
+   * Delete a codespace
+   */
+  async deleteCodespace(codespaceName: string): Promise<void> {
+    await fetch(`${this.baseUrl}/user/codespaces/${codespaceName}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    })
+  }
+
+  /**
+   * List available machine types for a repository codespace
+   */
+  async listCodespaceMachines(owner: string, repo: string): Promise<{ total_count: number; machines: GitHubCodespaceMachine[] }> {
+    return this.request(`/repos/${owner}/${repo}/codespaces/machines`)
+  }
+
+  /**
+   * Export a codespace (creates a branch with the current state)
+   */
+  async exportCodespace(codespaceName: string): Promise<{ id: string; state: string; branch: string | null; sha: string | null; export_url: string }> {
+    return this.request(`/user/codespaces/${codespaceName}/exports`, {
+      method: 'POST',
     })
   }
 }

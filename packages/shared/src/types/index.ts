@@ -6,6 +6,12 @@ export * from './architecture'
 // Re-export system map types
 export * from './system-map'
 
+// Re-export agent implementation types
+export * from './agent-implementation'
+
+// Re-export collaborative editing types
+export * from './collaborative-editing'
+
 export type ProjectRole = 'OWNER' | 'MAINTAINER' | 'MEMBER'
 
 export type TaskStatus = 'BACKLOG' | 'TODO' | 'IN_PROGRESS' | 'IN_REVIEW' | 'BLOCKED' | 'DONE'
@@ -63,6 +69,10 @@ export type TaskActivityKind =
   | 'AGENT_AUTO_STATUS_UPDATE'
   | 'CONTEXT_LINKED'
   | 'CONTEXT_UNLINKED'
+  | 'AGENT_IMPLEMENTATION_STARTED'
+  | 'AGENT_IMPLEMENTATION_COMPLETED'
+  | 'AGENT_IMPLEMENTATION_FAILED'
+  | 'AGENT_ITERATION_COMPLETED'
 
 export type ChatSender = 'USER' | 'LANEPILOT'
 
@@ -801,6 +811,13 @@ export interface RepoDocBundleSummary {
     api: number
     features: number
     runbook: number
+  }
+  /** Verification results from evidence validation */
+  verification?: {
+    overall_score: number // 0-100
+    verified_evidence: number
+    total_evidence: number
+    fully_verified_pages: number
   }
 }
 

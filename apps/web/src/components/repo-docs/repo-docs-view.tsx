@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,8 @@ import {
   ChevronRight,
   History,
   Loader2,
+  X,
+  AlertTriangle,
 } from 'lucide-react'
 import type { RepoDocBundle, RepoDocPage, RepoDocCategory, RepoDocBundleSummary } from '@laneshare/shared'
 import { REPO_DOC_CATEGORY_LABELS } from '@laneshare/shared'
@@ -47,6 +49,16 @@ interface PageSummary {
   user_edited: boolean
 }
 
+interface DocGenProgress {
+  stage: 'starting' | 'calling_api' | 'parsing' | 'continuation' | 'complete' | 'error'
+  message: string
+  pagesGenerated: number
+  round: number
+  maxRounds: number
+  continuationAttempt?: number
+  lastUpdated?: string
+}
+
 const categoryIcons: Record<RepoDocCategory, React.ReactNode> = {
   ARCHITECTURE: <Building2 className="h-4 w-4" />,
   API: <Code2 className="h-4 w-4" />,
@@ -64,6 +76,37 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
   const [activeCategory, setActiveCategory] = useState<RepoDocCategory | 'ALL'>('ALL')
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [docGenProgress, setDocGenProgress] = useState<DocGenProgress | null>(null)
+  const [currentBundleId, setCurrentBundleId] = useState<string | null>(null)
+  const [isCancelling, setIsCancelling] = useState(false)
+
+  // Check if progress is stale (no update for more than 2 minutes)
+  const isProgressStale = (progress: DocGenProgress | null): boolean => {
+    if (!progress?.lastUpdated) return false
+    const lastUpdate = new Date(progress.lastUpdated).getTime()
+    const now = Date.now()
+    return now - lastUpdate > 2 * 60 * 1000 // 2 minutes
+  }
+
+  const getDocStageLabel = (progress: DocGenProgress | null): string => {
+    if (!progress) return 'Generating documentation...'
+    switch (progress.stage) {
+      case 'starting':
+        return 'Initializing...'
+      case 'calling_api':
+        return `Round ${progress.round}/${progress.maxRounds}: Analyzing repository...`
+      case 'parsing':
+        return `Round ${progress.round}/${progress.maxRounds}: Processing response...`
+      case 'continuation':
+        return `Continuation ${progress.continuationAttempt}: Generating more pages...`
+      case 'complete':
+        return 'Saving documentation...'
+      case 'error':
+        return 'Error occurred'
+      default:
+        return progress.message || 'Generating documentation...'
+    }
+  }
 
   // Fetch pages on mount
   useEffect(() => {
@@ -74,14 +117,24 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
   useEffect(() => {
     if (repo.doc_status === 'GENERATING') {
       setIsGenerating(true)
+      // Set bundle id from repo if we don't have one
+      if (repo.doc_bundle_id && !currentBundleId) {
+        setCurrentBundleId(repo.doc_bundle_id)
+      }
       const interval = setInterval(() => {
         fetchPages()
-      }, 3000)
+        // Also fetch bundle progress
+        if (repo.doc_bundle_id) {
+          fetchBundleProgress(repo.doc_bundle_id)
+        }
+      }, 2000)
       return () => clearInterval(interval)
     } else {
       setIsGenerating(false)
+      setDocGenProgress(null)
+      setCurrentBundleId(null)
     }
-  }, [repo.doc_status])
+  }, [repo.doc_status, repo.doc_bundle_id])
 
   const fetchPages = async () => {
     try {
@@ -109,8 +162,61 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
     }
   }
 
+  const fetchBundleProgress = async (bundleId: string) => {
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/repos/${repoId}/docs/bundles/${bundleId}`
+      )
+      if (response.ok) {
+        const bundleData = await response.json()
+        if (bundleData.progress_json) {
+          setDocGenProgress(bundleData.progress_json)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch bundle progress:', error)
+    }
+  }
+
+  const handleCancelDocs = async () => {
+    setIsCancelling(true)
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/repos/${repoId}/docs/cancel`,
+        { method: 'POST' }
+      )
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to cancel documentation generation')
+      }
+
+      // Clear local state
+      setIsGenerating(false)
+      setDocGenProgress(null)
+      setCurrentBundleId(null)
+
+      toast({
+        title: 'Generation Cancelled',
+        description: 'Documentation generation has been stopped.',
+      })
+
+      router.refresh()
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to cancel',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
   const handleGenerate = async (force = false) => {
     setIsGenerating(true)
+    setDocGenProgress(null)
     try {
       const response = await fetch(
         `/api/projects/${projectId}/repos/${repoId}/docs/generate`,
@@ -134,10 +240,93 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
         })
         setIsGenerating(false)
       } else {
+        // Store bundle id for progress polling
+        if (data.bundle_id) {
+          setCurrentBundleId(data.bundle_id)
+        }
+
         toast({
           title: 'Generation Started',
           description: 'Documentation generation is in progress...',
         })
+
+        // Start polling for progress
+        const pollProgress = async () => {
+          if (!data.bundle_id) return
+
+          try {
+            const [pagesRes, bundleRes] = await Promise.all([
+              fetch(`/api/projects/${projectId}/repos/${repoId}/docs/pages`),
+              fetch(`/api/projects/${projectId}/repos/${repoId}/docs/bundles/${data.bundle_id}`),
+            ])
+
+            // Check bundle status from the direct bundle endpoint (source of truth)
+            if (bundleRes.ok) {
+              const bundleData = await bundleRes.json()
+
+              // Update progress if available
+              if (bundleData.progress_json) {
+                setDocGenProgress(bundleData.progress_json)
+              }
+
+              // Check if completed - use bundle endpoint status as source of truth
+              if (bundleData.status && bundleData.status !== 'GENERATING' && bundleData.status !== 'PENDING') {
+                // Fetch final pages data
+                if (pagesRes.ok) {
+                  const pagesData = await pagesRes.json()
+                  setBundle(pagesData.bundle)
+                  setPages(pagesData.pages)
+                }
+
+                setIsGenerating(false)
+                setDocGenProgress(null)
+                setCurrentBundleId(null)
+                router.refresh()
+
+                if (bundleData.status === 'ERROR') {
+                  toast({
+                    title: 'Generation Failed',
+                    description: bundleData.error || 'An error occurred while generating documentation.',
+                    variant: 'destructive',
+                  })
+                } else {
+                  // Refetch pages to get accurate count
+                  const finalPagesRes = await fetch(`/api/projects/${projectId}/repos/${repoId}/docs/pages`)
+                  if (finalPagesRes.ok) {
+                    const finalPagesData = await finalPagesRes.json()
+                    setBundle(finalPagesData.bundle)
+                    setPages(finalPagesData.pages)
+                    toast({
+                      title: 'Documentation Ready',
+                      description: `Generated ${finalPagesData.pages?.length || 0} documentation pages.`,
+                    })
+                  } else {
+                    toast({
+                      title: 'Documentation Ready',
+                      description: 'Documentation generation completed.',
+                    })
+                  }
+                }
+                return
+              }
+            }
+
+            // Update pages if available (for UI updates during generation)
+            if (pagesRes.ok) {
+              const pagesData = await pagesRes.json()
+              setBundle(pagesData.bundle)
+              setPages(pagesData.pages)
+            }
+
+            // Continue polling
+            setTimeout(pollProgress, 2000)
+          } catch (error) {
+            console.error('Error polling progress:', error)
+            setTimeout(pollProgress, 2000)
+          }
+        }
+
+        pollProgress()
       }
     } catch (error) {
       console.error('Failed to generate:', error)
@@ -147,6 +336,7 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
         variant: 'destructive',
       })
       setIsGenerating(false)
+      setDocGenProgress(null)
     }
   }
 
@@ -159,21 +349,81 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bundleId: bundle.id, clearAllReviewFlags: true }),
+          body: JSON.stringify({
+            bundleId: bundle.id,
+            clearAllReviewFlags: true,
+            copyToDocuments: true,
+          }),
         }
       )
 
+      const data = await response.json()
+
       if (!response.ok) {
-        const data = await response.json()
         throw new Error(data.error || 'Failed to mark as reviewed')
       }
 
+      const total = (data.documents_created || 0) + (data.documents_updated || 0)
+      let description = 'Documentation has been marked as reviewed.'
+      if (total > 0) {
+        const parts = []
+        if (data.documents_created > 0) parts.push(`${data.documents_created} created`)
+        if (data.documents_updated > 0) parts.push(`${data.documents_updated} updated`)
+        description = `Documentation marked as reviewed. ${parts.join(', ')} in project documentation.`
+      }
       toast({
         title: 'Marked as Reviewed',
-        description: 'Documentation has been marked as reviewed.',
+        description,
       })
 
       fetchPages()
+      router.refresh()
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleSyncToDocuments = async () => {
+    if (!bundle) return
+
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/repos/${repoId}/docs/mark-reviewed`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bundleId: bundle.id,
+            clearAllReviewFlags: false,
+            copyToDocuments: true,
+          }),
+        }
+      )
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to sync to documentation')
+      }
+
+      const total = (data.documents_created || 0) + (data.documents_updated || 0)
+      let description = 'Documentation is already synced.'
+      if (total > 0) {
+        const parts = []
+        if (data.documents_created > 0) parts.push(`${data.documents_created} created`)
+        if (data.documents_updated > 0) parts.push(`${data.documents_updated} updated`)
+        description = `${parts.join(', ')} in project documentation.`
+      }
+      toast({
+        title: 'Synced to Documentation',
+        description,
+      })
+
+      router.refresh()
     } catch (error) {
       toast({
         title: 'Error',
@@ -276,7 +526,7 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
         {/* Actions */}
         <div className="p-4 border-b space-y-2">
           <Button
-            onClick={() => handleGenerate(false)}
+            onClick={() => handleGenerate(pages.length > 0)}
             disabled={isGenerating}
             className="w-full"
           >
@@ -298,7 +548,72 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
             )}
           </Button>
 
-          {bundle?.status === 'NEEDS_REVIEW' && (
+          {/* Progress bar when generating */}
+          {isGenerating && (
+            <div className="space-y-2 bg-gray-50 dark:bg-gray-900/50 p-3 rounded-md border border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                  {getDocStageLabel(docGenProgress)}
+                </span>
+                <div className="flex items-center gap-2">
+                  {docGenProgress?.pagesGenerated !== undefined && docGenProgress.pagesGenerated > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      {docGenProgress.pagesGenerated} pages
+                    </Badge>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                    onClick={handleCancelDocs}
+                    disabled={isCancelling}
+                    title="Cancel generation"
+                  >
+                    {isCancelling ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <X className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+              {/* Stale progress warning */}
+              {isProgressStale(docGenProgress) && (
+                <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
+                  <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                  <span>Progress appears stale. The process may have stopped.</span>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-xs text-amber-700 dark:text-amber-300 underline"
+                    onClick={handleCancelDocs}
+                  >
+                    Cancel and retry
+                  </Button>
+                </div>
+              )}
+              {docGenProgress?.message && !isProgressStale(docGenProgress) && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                  {docGenProgress.message}
+                </p>
+              )}
+              {/* Progress indicator - indeterminate animated bar */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500 rounded-full animate-progress-indeterminate"
+                    style={{ width: '30%' }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap font-medium">
+                  Round {docGenProgress?.round || 1}/{docGenProgress?.maxRounds || 3}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {bundle?.status === 'NEEDS_REVIEW' && !isGenerating && (
             <Button
               variant="outline"
               onClick={handleMarkReviewed}
@@ -306,6 +621,17 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
             >
               <CheckCircle className="h-4 w-4 mr-2" />
               Mark as Reviewed
+            </Button>
+          )}
+
+          {bundle?.status === 'READY' && pages.length > 0 && !isGenerating && (
+            <Button
+              variant="outline"
+              onClick={handleSyncToDocuments}
+              className="w-full"
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              Sync to Documentation
             </Button>
           )}
         </div>

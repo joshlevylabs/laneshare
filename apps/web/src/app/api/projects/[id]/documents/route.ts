@@ -210,3 +210,66 @@ export async function POST(
 
   return NextResponse.json(document, { status: 201 })
 }
+
+// DELETE /api/projects/[id]/documents - Bulk delete documents
+const bulkDeleteSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(100),
+})
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const supabase = createServerSupabaseClient()
+  const serviceClient = createServiceRoleClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Check admin access (OWNER or MAINTAINER required for delete)
+  const { data: membership } = await supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', params.id)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!membership || !['OWNER', 'MAINTAINER'].includes(membership.role)) {
+    return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
+  }
+
+  // Parse request body
+  const body = await request.json()
+  const result = bulkDeleteSchema.safeParse(body)
+
+  if (!result.success) {
+    return NextResponse.json(
+      { error: 'Invalid input', details: result.error.flatten() },
+      { status: 400 }
+    )
+  }
+
+  const { ids } = result.data
+
+  // Delete documents (only ones belonging to this project)
+  const { error, count } = await serviceClient
+    .from('documents')
+    .delete()
+    .eq('project_id', params.id)
+    .in('id', ids)
+
+  if (error) {
+    console.error('Failed to delete documents:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json({
+    success: true,
+    deleted: count || ids.length
+  })
+}

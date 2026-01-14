@@ -10,7 +10,7 @@ import { z } from 'zod'
 
 const validateSchema = z.object({
   supabase_url: z.string().url('Invalid Supabase URL'),
-  service_role_key: z.string().min(20, 'Invalid service role key'),
+  access_token: z.string().min(20, 'Invalid access token'),
 })
 
 export async function POST(
@@ -53,13 +53,13 @@ export async function POST(
     )
   }
 
-  const { supabase_url, service_role_key } = validation.data
+  const { supabase_url, access_token } = validation.data
 
   // Validate connection using the adapter
   const adapter = createSupabaseAdapter()
   const result = await adapter.validateConnection(
     { supabase_url },
-    { service_role_key }
+    { access_token }
   )
 
   if (!result.valid) {

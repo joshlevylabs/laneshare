@@ -1,15 +1,10 @@
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import type { System, CreateSystemInput } from '@laneshare/shared'
 
 const createSystemSchema = z.object({
   name: z.string().min(1).max(200),
-  description: z.string().max(2000).optional(),
-  in_scope: z.string().max(2000).optional(),
-  out_of_scope: z.string().max(2000).optional(),
-  keywords: z.array(z.string()).max(50).optional(),
-  repo_ids: z.array(z.string().uuid()).max(20).optional(),
+  description: z.string().max(5000).optional(),
 })
 
 // GET /api/projects/[id]/systems - List all systems for a project
@@ -39,11 +34,19 @@ export async function GET(
     return NextResponse.json({ error: 'Access denied' }, { status: 403 })
   }
 
-  // Fetch systems with computed fields
+  // Fetch systems with snapshots
   const { data: systems, error } = await supabase
     .from('systems')
     .select(`
-      *,
+      id,
+      project_id,
+      name,
+      slug,
+      description,
+      status,
+      created_by,
+      created_at,
+      updated_at,
       system_flow_snapshots (
         id,
         version,
@@ -59,42 +62,26 @@ export async function GET(
   }
 
   // Transform to include computed fields
-  const systemsWithCounts = await Promise.all(
-    (systems || []).map(async (system) => {
-      // Get latest snapshot
-      const latestSnapshot = system.system_flow_snapshots
-        ?.sort((a: { version: number }, b: { version: number }) => b.version - a.version)[0]
+  const systemsWithCounts = (systems || []).map((system) => {
+    // Get latest snapshot
+    const latestSnapshot = system.system_flow_snapshots
+      ?.sort((a: { version: number }, b: { version: number }) => b.version - a.version)[0]
 
-      // Count nodes and verified nodes if snapshot exists
-      let nodeCount = 0
-      let verifiedCount = 0
+    // Count nodes if snapshot exists
+    const nodeCount = latestSnapshot?.graph_json?.nodes?.length || 0
 
-      if (latestSnapshot?.graph_json?.nodes) {
-        nodeCount = latestSnapshot.graph_json.nodes.length
+    const { system_flow_snapshots, ...systemData } = system
 
-        const { count } = await supabase
-          .from('system_node_verifications')
-          .select('*', { count: 'exact', head: true })
-          .eq('system_id', system.id)
-          .eq('is_verified', true)
-
-        verifiedCount = count || 0
-      }
-
-      const { system_flow_snapshots, ...systemData } = system
-
-      return {
-        ...systemData,
-        node_count: nodeCount,
-        verified_count: verifiedCount,
-        latest_snapshot: latestSnapshot ? {
-          id: latestSnapshot.id,
-          version: latestSnapshot.version,
-          generated_at: latestSnapshot.generated_at,
-        } : undefined,
-      }
-    })
-  )
+    return {
+      ...systemData,
+      node_count: nodeCount,
+      latest_snapshot: latestSnapshot ? {
+        id: latestSnapshot.id,
+        version: latestSnapshot.version,
+        generated_at: latestSnapshot.generated_at,
+      } : undefined,
+    }
+  })
 
   return NextResponse.json(systemsWithCounts)
 }
@@ -138,10 +125,10 @@ export async function POST(
     )
   }
 
-  const input = result.data as CreateSystemInput
+  const { name, description } = result.data
 
   // Generate slug from name
-  const slug = input.name
+  const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
@@ -167,13 +154,9 @@ export async function POST(
     .from('systems')
     .insert({
       project_id: params.id,
-      name: input.name,
+      name,
       slug,
-      description: input.description,
-      in_scope: input.in_scope,
-      out_of_scope: input.out_of_scope,
-      keywords: input.keywords || [],
-      repo_ids: input.repo_ids || [],
+      description,
       status: 'DRAFT',
       created_by: user.id,
     })

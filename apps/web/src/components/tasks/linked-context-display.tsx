@@ -16,7 +16,7 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import {
   X,
@@ -33,6 +33,7 @@ import {
   ArrowRight,
   ArrowLeft,
   Copy,
+  BookOpen,
 } from 'lucide-react'
 import type {
   TaskLinkedContext,
@@ -73,6 +74,7 @@ const TYPE_ICONS: Record<ContextSuggestionType, React.ReactNode> = {
   doc: <FileText className="h-3 w-3" />,
   feature: <Workflow className="h-3 w-3" />,
   ticket: <Ticket className="h-3 w-3" />,
+  repo_doc: <BookOpen className="h-3 w-3" />,
 }
 
 const TYPE_COLORS: Record<ContextSuggestionType, string> = {
@@ -82,6 +84,7 @@ const TYPE_COLORS: Record<ContextSuggestionType, string> = {
   doc: 'bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-200',
   feature: 'bg-cyan-100 text-cyan-800 border-cyan-200 hover:bg-cyan-200',
   ticket: 'bg-pink-100 text-pink-800 border-pink-200 hover:bg-pink-200',
+  repo_doc: 'bg-teal-100 text-teal-800 border-teal-200 hover:bg-teal-200',
 }
 
 const TICKET_LINK_LABELS: Record<TicketLinkType, { label: string; icon: React.ReactNode }> = {

@@ -29,13 +29,6 @@ export default async function NewSystemPage({
     redirect(`/projects/${params.id}/systems`)
   }
 
-  // Fetch repos for selection
-  const { data: repos } = await supabase
-    .from('repos')
-    .select('id, owner, name')
-    .eq('project_id', params.id)
-    .order('name')
-
   // Fetch project name
   const { data: project } = await supabase
     .from('projects')
@@ -47,7 +40,6 @@ export default async function NewSystemPage({
     <NewSystemWizard
       projectId={params.id}
       projectName={project?.name || 'Unknown Project'}
-      repos={repos || []}
     />
   )
 }

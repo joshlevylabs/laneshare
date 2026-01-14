@@ -7,13 +7,12 @@ import {
   LayoutDashboard,
   GitBranch,
   ListTodo,
-  MessageSquare,
   FileText,
   Settings,
   Search,
-  Map,
-  Plug,
   Boxes,
+  Plug,
+  Terminal,
 } from 'lucide-react'
 
 interface ProjectSidebarProps {
@@ -27,14 +26,14 @@ const navItems = [
     icon: LayoutDashboard,
   },
   {
-    title: 'Repositories',
-    href: '/repos',
-    icon: GitBranch,
-  },
-  {
     title: 'Tasks',
     href: '/tasks',
     icon: ListTodo,
+  },
+  {
+    title: 'Workspace',
+    href: '/workspace',
+    icon: Terminal,
   },
   {
     title: 'Search',
@@ -42,29 +41,24 @@ const navItems = [
     icon: Search,
   },
   {
-    title: 'LanePilot Chat',
-    href: '/chat',
-    icon: MessageSquare,
+    title: 'Systems',
+    href: '/systems',
+    icon: Boxes,
   },
   {
     title: 'Documentation',
-    href: '/docs',
+    href: '/documents',
     icon: FileText,
+  },
+  {
+    title: 'Repositories',
+    href: '/repos',
+    icon: GitBranch,
   },
   {
     title: 'Services',
     href: '/services',
     icon: Plug,
-  },
-  {
-    title: 'Architecture Map',
-    href: '/map',
-    icon: Map,
-  },
-  {
-    title: 'System Maps',
-    href: '/systems',
-    icon: Boxes,
   },
   {
     title: 'Settings',

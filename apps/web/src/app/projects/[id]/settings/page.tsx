@@ -5,6 +5,7 @@ import { AddMemberDialog } from '@/components/settings/add-member-dialog'
 import { CreateInviteDialog } from '@/components/settings/create-invite-dialog'
 import { InvitationsList } from '@/components/settings/invitations-list'
 import { ProjectSettingsForm } from '@/components/settings/project-settings-form'
+import { ClaudeCodeSettings } from '@/components/settings/claude-code-settings'
 
 export default async function SettingsPage({
   params,
@@ -57,6 +58,18 @@ export default async function SettingsPage({
             project={project!}
             isAdmin={isAdmin}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>AI Documentation</CardTitle>
+          <CardDescription>
+            Configure Claude Code for automatic documentation generation
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ClaudeCodeSettings />
         </CardContent>
       </Card>
 

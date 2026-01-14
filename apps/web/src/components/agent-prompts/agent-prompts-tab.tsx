@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { Loader2, Plus, GitBranch } from 'lucide-react'
 import { RepoSession } from './repo-session'
 import type { Repo, AgentPromptSession } from '@laneshare/shared'

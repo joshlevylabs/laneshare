@@ -16,6 +16,11 @@ import type {
   EnvVarAssetData,
   SupabaseSyncStats,
   VercelSyncStats,
+  OpenApiSpecAssetData,
+  OpenApiEndpointAssetData,
+  OpenApiSchemaAssetData,
+  OpenApiSecuritySchemeAssetData,
+  OpenApiConfig,
 } from '@/lib/supabase/types'
 
 interface DocGenerationResult {
@@ -95,6 +100,23 @@ export async function runServiceDocGeneration(
       )
 
       for (const doc of vercelDocs) {
+        await upsertDocPage(supabase, projectId, doc.slug, doc.title, doc.category, doc.markdown)
+        result.pages.push({ slug: doc.slug, title: doc.title, markdown: doc.markdown })
+      }
+    } else if (serviceType === 'openapi') {
+      const openapiDocs = generateOpenApiDocs(
+        assets as Array<{
+          asset_type: string
+          asset_key: string
+          name: string
+          data_json: Record<string, unknown>
+        }>,
+        connection.display_name,
+        connection.last_synced_at,
+        connection.config_json as OpenApiConfig
+      )
+
+      for (const doc of openapiDocs) {
         await upsertDocPage(supabase, projectId, doc.slug, doc.title, doc.category, doc.markdown)
         result.pages.push({ slug: doc.slug, title: doc.title, markdown: doc.markdown })
       }
@@ -458,6 +480,265 @@ ${vars.map((v) => `- \`${v}\``).join('\n')}
     title: 'Deployment Architecture',
     category: 'architecture',
     markdown: deploymentDoc,
+  })
+
+  return docs
+}
+
+/**
+ * Generate OpenAPI documentation pages
+ */
+function generateOpenApiDocs(
+  assets: Array<{
+    asset_type: string
+    asset_key: string
+    name: string
+    data_json: Record<string, unknown>
+  }>,
+  displayName: string,
+  lastSyncedAt: string | null,
+  config: OpenApiConfig
+): Array<{ slug: string; title: string; category: 'architecture' | 'features' | 'decisions' | 'status' | 'services'; markdown: string }> {
+  const docs: Array<{
+    slug: string
+    title: string
+    category: 'architecture' | 'features' | 'decisions' | 'status' | 'services'
+    markdown: string
+  }> = []
+
+  // Group assets by type
+  const specAssets = assets.filter((a) => a.asset_type === 'openapi_spec')
+  const endpoints = assets.filter((a) => a.asset_type === 'endpoint')
+  const schemas = assets.filter((a) => a.asset_type === 'schema')
+  const securitySchemes = assets.filter((a) => a.asset_type === 'security_scheme')
+
+  const specData = specAssets[0]?.data_json as unknown as OpenApiSpecAssetData | undefined
+  const syncDate = lastSyncedAt ? new Date(lastSyncedAt).toLocaleString() : 'Never'
+  const apiSlug = config.api_slug || 'api'
+
+  // Group endpoints by tag
+  const endpointsByTag: Record<string, Array<{ data: OpenApiEndpointAssetData; name: string }>> = {}
+  const untaggedEndpoints: Array<{ data: OpenApiEndpointAssetData; name: string }> = []
+
+  for (const ep of endpoints) {
+    const data = ep.data_json as unknown as OpenApiEndpointAssetData
+    if (data.tags && data.tags.length > 0) {
+      for (const tag of data.tags) {
+        if (!endpointsByTag[tag]) endpointsByTag[tag] = []
+        endpointsByTag[tag].push({ data, name: ep.name })
+      }
+    } else {
+      untaggedEndpoints.push({ data, name: ep.name })
+    }
+  }
+
+  // Main API reference doc
+  let apiDoc = `# API: ${specData?.title || displayName}
+
+> Auto-generated from connected OpenAPI spec. Last synced: ${syncDate}
+
+## Overview
+
+${specData?.description || 'No description provided.'}
+
+- **Version:** ${specData?.version || 'Unknown'}
+- **OpenAPI:** ${specData?.openapi_version || 'Unknown'}
+${specData?.base_url ? `- **Base URL:** \`${specData.base_url}\`` : ''}
+
+## Summary
+
+| Metric | Count |
+|--------|-------|
+| Endpoints | ${endpoints.length} |
+| Schemas | ${schemas.length} |
+| Tags | ${specData?.tag_count || Object.keys(endpointsByTag).length} |
+| Security Schemes | ${securitySchemes.length} |
+
+`
+
+  // Security schemes section
+  if (securitySchemes.length > 0) {
+    apiDoc += `## Authentication
+
+| Name | Type | Location | Description |
+|------|------|----------|-------------|
+`
+    for (const scheme of securitySchemes) {
+      const data = scheme.data_json as unknown as OpenApiSecuritySchemeAssetData
+      apiDoc += `| ${data.name} | ${data.type} | ${data.in || '-'} | ${data.description || '-'} |\n`
+    }
+    apiDoc += '\n'
+  }
+
+  // Tags index
+  if (Object.keys(endpointsByTag).length > 0) {
+    apiDoc += `## Tags
+
+| Tag | Endpoints |
+|-----|-----------|
+`
+    for (const [tag, tagEndpoints] of Object.entries(endpointsByTag).sort((a, b) => a[0].localeCompare(b[0]))) {
+      apiDoc += `| ${tag} | ${tagEndpoints.length} |\n`
+    }
+    apiDoc += '\n'
+  }
+
+  // Endpoints by tag
+  apiDoc += `## Endpoints
+
+`
+
+  const sortedTags = Object.keys(endpointsByTag).sort()
+  for (const tag of sortedTags) {
+    const tagEndpoints = endpointsByTag[tag]
+    apiDoc += `### ${tag}
+
+| Method | Path | Summary | Operation ID |
+|--------|------|---------|--------------|
+`
+    for (const { data } of tagEndpoints.sort((a, b) => a.data.path.localeCompare(b.data.path))) {
+      const deprecated = data.deprecated ? ' ~~deprecated~~' : ''
+      apiDoc += `| **${data.method}** | \`${data.path}\` | ${data.summary || '-'}${deprecated} | ${data.operationId || '-'} |\n`
+    }
+    apiDoc += '\n'
+  }
+
+  // Untagged endpoints
+  if (untaggedEndpoints.length > 0) {
+    apiDoc += `### Other Endpoints
+
+| Method | Path | Summary | Operation ID |
+|--------|------|---------|--------------|
+`
+    for (const { data } of untaggedEndpoints.sort((a, b) => a.data.path.localeCompare(b.data.path))) {
+      const deprecated = data.deprecated ? ' ~~deprecated~~' : ''
+      apiDoc += `| **${data.method}** | \`${data.path}\` | ${data.summary || '-'}${deprecated} | ${data.operationId || '-'} |\n`
+    }
+    apiDoc += '\n'
+  }
+
+  // Schemas section (compact)
+  if (schemas.length > 0) {
+    apiDoc += `## Schemas
+
+| Name | Type | Description |
+|------|------|-------------|
+`
+    for (const schema of schemas.sort((a, b) => a.name.localeCompare(b.name))) {
+      const data = schema.data_json as unknown as OpenApiSchemaAssetData
+      const type = data.type || (data.properties ? 'object' : data.enum ? 'enum' : '-')
+      apiDoc += `| ${data.name} | ${type} | ${data.description?.slice(0, 60) || '-'}${data.description && data.description.length > 60 ? '...' : ''} |\n`
+    }
+    apiDoc += '\n'
+  }
+
+  docs.push({
+    slug: `apis/${apiSlug}`,
+    title: `API: ${specData?.title || displayName}`,
+    category: 'architecture',
+    markdown: apiDoc,
+  })
+
+  // Detailed endpoint pages for each tag (if we have many endpoints)
+  if (endpoints.length > 20) {
+    for (const tag of sortedTags) {
+      const tagEndpoints = endpointsByTag[tag]
+      let tagDoc = `# ${tag} Endpoints
+
+> Part of [${specData?.title || displayName}](../apis/${apiSlug})
+
+`
+      for (const { data } of tagEndpoints.sort((a, b) => a.data.path.localeCompare(b.data.path))) {
+        tagDoc += `## ${data.method} ${data.path}
+
+${data.summary ? `**${data.summary}**\n\n` : ''}${data.description || ''}
+
+${data.operationId ? `- **Operation ID:** \`${data.operationId}\`\n` : ''}${data.deprecated ? '- **Status:** Deprecated\n' : ''}
+
+`
+        // Parameters
+        if (data.parameters && data.parameters.length > 0) {
+          tagDoc += `### Parameters
+
+| Name | In | Type | Required | Description |
+|------|-------|------|----------|-------------|
+`
+          for (const param of data.parameters) {
+            const type = param.schema?.type || param.schema?.$ref?.split('/').pop() || '-'
+            tagDoc += `| ${param.name} | ${param.in} | ${type} | ${param.required ? 'Yes' : 'No'} | ${param.description || '-'} |\n`
+          }
+          tagDoc += '\n'
+        }
+
+        // Request body
+        if (data.requestBody && data.requestBody.content) {
+          tagDoc += `### Request Body
+
+${data.requestBody.description || 'Request body required.'}
+
+| Content Type | Schema |
+|--------------|--------|
+`
+          for (const [contentType, content] of Object.entries(data.requestBody.content)) {
+            const schemaRef = content.schema?.$ref?.split('/').pop() || content.schema?.type || '-'
+            tagDoc += `| ${contentType} | ${schemaRef} |\n`
+          }
+          tagDoc += '\n'
+        }
+
+        // Responses
+        if (data.responses) {
+          tagDoc += `### Responses
+
+| Code | Description |
+|------|-------------|
+`
+          for (const [code, response] of Object.entries(data.responses)) {
+            tagDoc += `| ${code} | ${response.description || '-'} |\n`
+          }
+          tagDoc += '\n'
+        }
+
+        tagDoc += '---\n\n'
+      }
+
+      docs.push({
+        slug: `apis/${apiSlug}/${tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        title: `${tag} - ${specData?.title || displayName}`,
+        category: 'architecture',
+        markdown: tagDoc,
+      })
+    }
+  }
+
+  // APIs index page
+  const apisIndexDoc = `# Connected APIs
+
+> Auto-generated index of connected OpenAPI specifications.
+
+## APIs
+
+| API | Version | Endpoints | Last Sync |
+|-----|---------|-----------|-----------|
+| [${specData?.title || displayName}](./apis/${apiSlug}) | ${specData?.version || '-'} | ${endpoints.length} | ${syncDate} |
+
+## Coverage
+
+- **Total Endpoints:** ${endpoints.length}
+- **Total Schemas:** ${schemas.length}
+- **Security Schemes:** ${securitySchemes.length}
+
+## Quick Links
+
+${sortedTags.slice(0, 10).map((tag) => `- [${tag}](./apis/${apiSlug}#${tag.toLowerCase()})`).join('\n')}
+${sortedTags.length > 10 ? `\n... and ${sortedTags.length - 10} more tags` : ''}
+`
+
+  docs.push({
+    slug: 'architecture/apis',
+    title: 'Connected APIs',
+    category: 'architecture',
+    markdown: apisIndexDoc,
   })
 
   return docs

@@ -4,9 +4,10 @@ import { z } from 'zod'
 
 const createSprintSchema = z.object({
   name: z.string().min(1).max(100),
-  goal: z.string().max(500).nullable().optional(),
+  goal: z.string().max(500).optional(),
   start_date: z.string().nullable().optional(),
   end_date: z.string().nullable().optional(),
+  status: z.enum(['PLANNED', 'ACTIVE', 'COMPLETED']).optional(),
 })
 
 export async function GET(
@@ -23,10 +24,25 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Check membership
+  const { data: membership } = await supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', params.id)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!membership) {
+    return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+  }
+
   // Get sprints with task counts
   const { data: sprints, error } = await supabase
     .from('sprints')
-    .select('*')
+    .select(`
+      *,
+      tasks:tasks(count)
+    `)
     .eq('project_id', params.id)
     .order('created_at', { ascending: false })
 
@@ -34,33 +50,14 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // Get task counts for each sprint
-  const sprintsWithCounts = await Promise.all(
-    sprints.map(async (sprint) => {
-      const { data: tasks } = await supabase
-        .from('tasks')
-        .select('status, story_points')
-        .eq('sprint_id', sprint.id)
+  // Transform to include task_count
+  const sprintsWithCounts = sprints?.map(sprint => ({
+    ...sprint,
+    task_count: sprint.tasks?.[0]?.count || 0,
+    tasks: undefined, // Remove the nested tasks array
+  }))
 
-      const taskCount = tasks?.length || 0
-      const completedTaskCount = tasks?.filter((t) => t.status === 'DONE').length || 0
-      const totalStoryPoints = tasks?.reduce((sum, t) => sum + (t.story_points || 0), 0) || 0
-      const completedStoryPoints =
-        tasks
-          ?.filter((t) => t.status === 'DONE')
-          .reduce((sum, t) => sum + (t.story_points || 0), 0) || 0
-
-      return {
-        ...sprint,
-        task_count: taskCount,
-        completed_task_count: completedTaskCount,
-        total_story_points: totalStoryPoints,
-        completed_story_points: completedStoryPoints,
-      }
-    })
-  )
-
-  return NextResponse.json(sprintsWithCounts)
+  return NextResponse.json(sprintsWithCounts || [])
 }
 
 export async function POST(
@@ -77,7 +74,7 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Check if user is project admin (OWNER or MAINTAINER)
+  // Check membership - require OWNER or MAINTAINER
   const { data: membership } = await supabase
     .from('project_members')
     .select('role')
@@ -103,8 +100,11 @@ export async function POST(
     .from('sprints')
     .insert({
       project_id: params.id,
-      status: 'PLANNED',
-      ...result.data,
+      name: result.data.name,
+      goal: result.data.goal,
+      start_date: result.data.start_date,
+      end_date: result.data.end_date,
+      status: result.data.status || 'PLANNED',
     })
     .select()
     .single()

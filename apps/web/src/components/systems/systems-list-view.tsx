@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -10,7 +9,6 @@ import {
   Plus,
   Map,
   CheckCircle2,
-  AlertCircle,
   Clock,
   ChevronRight,
   Boxes,
@@ -24,10 +22,6 @@ interface SystemWithCounts {
   name: string
   slug: string
   description?: string
-  in_scope?: string
-  out_of_scope?: string
-  keywords: string[]
-  repo_ids: string[]
   status: SystemStatus
   created_by: string
   created_at: string
@@ -38,7 +32,6 @@ interface SystemWithCounts {
     version: number
     generated_at: string
   }
-  verified_count: number
 }
 
 interface SystemsListViewProps {
@@ -50,9 +43,7 @@ interface SystemsListViewProps {
 
 const STATUS_CONFIG: Record<SystemStatus, { label: string; color: string; icon: typeof CheckCircle2 }> = {
   DRAFT: { label: 'Draft', color: 'bg-gray-500', icon: Clock },
-  NEEDS_AGENT_OUTPUT: { label: 'Needs Agent Output', color: 'bg-yellow-500', icon: AlertCircle },
-  GROUNDED: { label: 'Grounded', color: 'bg-green-500', icon: CheckCircle2 },
-  NEEDS_REVIEW: { label: 'Needs Review', color: 'bg-blue-500', icon: AlertCircle },
+  ACTIVE: { label: 'Active', color: 'bg-green-500', icon: CheckCircle2 },
 }
 
 export function SystemsListView({
@@ -70,10 +61,10 @@ export function SystemsListView({
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Boxes className="h-6 w-6" />
-            System Maps
+            Systems
           </h1>
           <p className="text-muted-foreground">
-            Define and document bounded systems within {projectName}
+            Create and manage system flowcharts for {projectName}
           </p>
         </div>
 
@@ -94,8 +85,8 @@ export function SystemsListView({
             <Boxes className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-semibold mb-2">No Systems Yet</h3>
             <p className="text-muted-foreground mb-4">
-              Systems are bounded areas of your codebase (like "Authentication" or "Billing").
-              {' '}Create your first system to start documenting your architecture.
+              Create systems to document how different parts of your codebase work together.
+              Each system can have its own flowchart showing components and their interactions.
             </p>
             {isAdmin && (
               <Button asChild>
@@ -110,8 +101,7 @@ export function SystemsListView({
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {systems.map((system) => {
-            const statusConfig = STATUS_CONFIG[system.status]
-            const StatusIcon = statusConfig.icon
+            const statusConfig = STATUS_CONFIG[system.status] || STATUS_CONFIG.DRAFT
 
             return (
               <Card
@@ -139,18 +129,10 @@ export function SystemsListView({
                 <CardContent>
                   <div className="flex items-center justify-between text-sm text-muted-foreground">
                     <div className="flex items-center gap-4">
-                      {system.node_count !== undefined && (
-                        <span className="flex items-center gap-1">
-                          <Map className="h-4 w-4" />
-                          {system.node_count} nodes
-                        </span>
-                      )}
-                      {system.verified_count > 0 && (
-                        <span className="flex items-center gap-1 text-green-600">
-                          <CheckCircle2 className="h-4 w-4" />
-                          {system.verified_count} verified
-                        </span>
-                      )}
+                      <span className="flex items-center gap-1">
+                        <Map className="h-4 w-4" />
+                        {system.node_count || 0} components
+                      </span>
                     </div>
                     <ChevronRight className="h-4 w-4" />
                   </div>
@@ -162,21 +144,6 @@ export function SystemsListView({
                       <Badge variant="outline" className="ml-auto text-xs">
                         v{system.latest_snapshot.version}
                       </Badge>
-                    </div>
-                  )}
-
-                  {system.keywords.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {system.keywords.slice(0, 3).map((keyword) => (
-                        <Badge key={keyword} variant="secondary" className="text-xs">
-                          {keyword}
-                        </Badge>
-                      ))}
-                      {system.keywords.length > 3 && (
-                        <Badge variant="secondary" className="text-xs">
-                          +{system.keywords.length - 3}
-                        </Badge>
-                      )}
                     </div>
                   )}
                 </CardContent>

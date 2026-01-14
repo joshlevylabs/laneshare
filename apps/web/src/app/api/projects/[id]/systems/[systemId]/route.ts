@@ -1,16 +1,11 @@
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import type { UpdateSystemInput } from '@laneshare/shared'
 
 const updateSystemSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).optional().nullable(),
-  in_scope: z.string().max(2000).optional().nullable(),
-  out_of_scope: z.string().max(2000).optional().nullable(),
-  keywords: z.array(z.string()).max(50).optional(),
-  repo_ids: z.array(z.string().uuid()).max(20).optional(),
-  status: z.enum(['DRAFT', 'NEEDS_AGENT_OUTPUT', 'GROUNDED', 'NEEDS_REVIEW']).optional(),
+  status: z.enum(['DRAFT', 'ACTIVE']).optional(),
 })
 
 // GET /api/projects/[id]/systems/[systemId] - Get a single system with full details
@@ -45,37 +40,12 @@ export async function GET(
     .from('systems')
     .select(`
       *,
-      system_artifacts (
-        id,
-        kind,
-        content,
-        content_json,
-        created_by,
-        created_at
-      ),
-      system_evidence (
-        id,
-        source_type,
-        source_ref,
-        excerpt,
-        metadata,
-        confidence,
-        created_at
-      ),
       system_flow_snapshots (
         id,
         version,
         graph_json,
         generated_at,
         generated_by,
-        notes
-      ),
-      system_node_verifications (
-        id,
-        node_id,
-        is_verified,
-        verified_by,
-        verified_at,
         notes
       )
     `)
@@ -96,14 +66,10 @@ export async function GET(
 
   // Count nodes
   const nodeCount = latestSnapshot?.graph_json?.nodes?.length || 0
-  const verifiedCount = system.system_node_verifications?.filter(
-    (v: { is_verified: boolean }) => v.is_verified
-  ).length || 0
 
   return NextResponse.json({
     ...system,
     node_count: nodeCount,
-    verified_count: verifiedCount,
     latest_snapshot: latestSnapshot,
   })
 }
@@ -159,7 +125,7 @@ export async function PATCH(
     )
   }
 
-  const input = result.data as UpdateSystemInput
+  const input = result.data
 
   // Build update object
   const updateData: Record<string, unknown> = {}
@@ -191,10 +157,6 @@ export async function PATCH(
   }
 
   if (input.description !== undefined) updateData.description = input.description
-  if (input.in_scope !== undefined) updateData.in_scope = input.in_scope
-  if (input.out_of_scope !== undefined) updateData.out_of_scope = input.out_of_scope
-  if (input.keywords !== undefined) updateData.keywords = input.keywords
-  if (input.repo_ids !== undefined) updateData.repo_ids = input.repo_ids
   if (input.status !== undefined) updateData.status = input.status
 
   // Update system

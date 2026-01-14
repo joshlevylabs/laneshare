@@ -21,6 +21,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -31,10 +32,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
-import { Bug, Zap, BookOpen, FlaskConical, CheckSquare } from 'lucide-react'
+import { Bug, Zap, BookOpen, FlaskConical, CheckSquare, LayoutList, GitBranch, CornerDownRight, Settings } from 'lucide-react'
 import { SELECT_SENTINELS, sprintSelect } from '@laneshare/shared'
+import { SprintManageDialog } from '../sprint-manage-dialog'
 import type { Task, Sprint, TaskStatus, TaskType } from '@laneshare/shared'
 
 interface Member {
@@ -51,6 +53,8 @@ interface TaskBoardViewProps {
   members: Member[]
   onTaskClick: (taskId: string) => void
   onTaskUpdate: (task: Task) => void
+  onSprintUpdate?: (sprint: Sprint) => void
+  onSprintDelete?: (sprintId: string) => void
 }
 
 const COLUMNS: { id: TaskStatus; title: string; color: string }[] = [
@@ -64,9 +68,21 @@ const COLUMNS: { id: TaskStatus; title: string; color: string }[] = [
 const TYPE_ICONS: Record<TaskType, React.ElementType> = {
   EPIC: Zap,
   STORY: BookOpen,
+  FEATURE: LayoutList,
   TASK: CheckSquare,
   BUG: Bug,
   SPIKE: FlaskConical,
+  SUBTASK: GitBranch,
+}
+
+const TYPE_COLORS: Record<TaskType, string> = {
+  EPIC: 'text-purple-500',
+  STORY: 'text-blue-500',
+  FEATURE: 'text-cyan-500',
+  TASK: 'text-green-500',
+  BUG: 'text-red-500',
+  SPIKE: 'text-yellow-500',
+  SUBTASK: 'text-gray-500',
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -116,8 +132,11 @@ function TaskCard({
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <TypeIcon className="h-3.5 w-3.5" />
+            <TypeIcon className={cn('h-3.5 w-3.5', TYPE_COLORS[task.type])} />
             <span className="font-mono">{task.key}</span>
+            {task.parent_task_id && (
+              <CornerDownRight className="h-3 w-3 text-muted-foreground" />
+            )}
           </div>
           <div
             className={cn('h-2 w-2 rounded-full', PRIORITY_COLORS[task.priority])}
@@ -164,6 +183,8 @@ export function TaskBoardView({
   members,
   onTaskClick,
   onTaskUpdate,
+  onSprintUpdate,
+  onSprintDelete,
 }: TaskBoardViewProps) {
   const { toast } = useToast()
   const router = useRouter()
@@ -171,6 +192,7 @@ export function TaskBoardView({
     SELECT_SENTINELS.ALL
   )
   const [activeTask, setActiveTask] = useState<Task | null>(null)
+  const [editingSprint, setEditingSprint] = useState<Sprint | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -281,6 +303,22 @@ export function TaskBoardView({
             Active: {activeSprint.name}
           </Badge>
         )}
+
+        {/* Edit Sprint button - show when a specific sprint is selected */}
+        {selectedSprintId !== SELECT_SENTINELS.ALL &&
+          selectedSprintId !== SELECT_SENTINELS.NO_SPRINT && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const sprint = sprints.find((s) => s.id === selectedSprintId)
+                if (sprint) setEditingSprint(sprint)
+              }}
+            >
+              <Settings className="h-4 w-4 mr-1" />
+              Edit Sprint
+            </Button>
+          )}
       </div>
 
       <DndContext
@@ -348,6 +386,25 @@ export function TaskBoardView({
           ) : null}
         </DragOverlay>
       </DndContext>
+
+      {/* Sprint Management Dialog */}
+      {editingSprint && (
+        <SprintManageDialog
+          open={!!editingSprint}
+          onOpenChange={(open) => !open && setEditingSprint(null)}
+          projectId={projectId}
+          sprint={editingSprint}
+          onSprintUpdate={(updated) => {
+            onSprintUpdate?.(updated)
+            setEditingSprint(null)
+          }}
+          onSprintDelete={(id) => {
+            onSprintDelete?.(id)
+            setSelectedSprintId(SELECT_SENTINELS.ALL)
+            setEditingSprint(null)
+          }}
+        />
+      )}
     </div>
   )
 }

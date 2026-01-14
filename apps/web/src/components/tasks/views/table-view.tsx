@@ -23,6 +23,9 @@ import {
   BookOpen,
   FlaskConical,
   CheckSquare,
+  LayoutList,
+  GitBranch,
+  CornerDownRight,
 } from 'lucide-react'
 import type { Task, Sprint, TaskType, TaskStatus, TaskPriority } from '@laneshare/shared'
 
@@ -45,9 +48,21 @@ interface TaskTableViewProps {
 const TYPE_ICONS: Record<TaskType, React.ElementType> = {
   EPIC: Zap,
   STORY: BookOpen,
+  FEATURE: LayoutList,
   TASK: CheckSquare,
   BUG: Bug,
   SPIKE: FlaskConical,
+  SUBTASK: GitBranch,
+}
+
+const TYPE_COLORS: Record<TaskType, string> = {
+  EPIC: 'text-purple-500',
+  STORY: 'text-blue-500',
+  FEATURE: 'text-cyan-500',
+  TASK: 'text-green-500',
+  BUG: 'text-red-500',
+  SPIKE: 'text-yellow-500',
+  SUBTASK: 'text-gray-500',
 }
 
 const STATUS_STYLES: Record<TaskStatus, string> = {
@@ -210,8 +225,11 @@ export function TaskTableView({
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
-                      <TypeIcon className="h-4 w-4 text-muted-foreground" />
+                      <TypeIcon className={cn('h-4 w-4', TYPE_COLORS[task.type])} />
                       <span className="text-sm">{task.type}</span>
+                      {task.parent_task_id && (
+                        <CornerDownRight className="h-3 w-3 text-muted-foreground" />
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>

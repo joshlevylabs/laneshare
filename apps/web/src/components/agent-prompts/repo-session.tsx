@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { Loader2, Sparkles, RefreshCw, Send } from 'lucide-react'
 import { PromptTurnCard } from './prompt-turn-card'
 import type { AgentPromptSession, AgentPromptTurn } from '@laneshare/shared'

@@ -141,6 +141,19 @@ export class GitHubClient {
     return content
   }
 
+  /**
+   * Get file content by path and branch, returning decoded text content
+   */
+  async getFileContentDecoded(owner: string, repo: string, path: string, branch: string): Promise<string | null> {
+    try {
+      const file = await this.getFileContent(owner, repo, path, branch)
+      return this.decodeContent(file.content, file.encoding)
+    } catch (error) {
+      console.warn(`[GitHub] Failed to get ${path}:`, error)
+      return null
+    }
+  }
+
   async listBranches(owner: string, repo: string): Promise<GitHubBranch[]> {
     return this.request(`/repos/${owner}/${repo}/branches`)
   }

@@ -25,11 +25,8 @@ export default async function SystemsPage({
       system_flow_snapshots (
         id,
         version,
+        graph_json,
         generated_at
-      ),
-      system_node_verifications (
-        id,
-        is_verified
       )
     `)
     .eq('project_id', params.id)
@@ -44,16 +41,14 @@ export default async function SystemsPage({
     const latestSnapshot = system.system_flow_snapshots
       ?.sort((a: { version: number }, b: { version: number }) => b.version - a.version)[0]
 
-    const verifiedCount = system.system_node_verifications?.filter(
-      (v: { is_verified: boolean }) => v.is_verified
-    ).length || 0
+    const nodeCount = latestSnapshot?.graph_json?.nodes?.length || 0
 
-    const { system_flow_snapshots, system_node_verifications, ...systemData } = system
+    const { system_flow_snapshots, ...systemData } = system
 
     return {
       ...systemData,
       latest_snapshot: latestSnapshot,
-      verified_count: verifiedCount,
+      node_count: nodeCount,
     }
   })
 

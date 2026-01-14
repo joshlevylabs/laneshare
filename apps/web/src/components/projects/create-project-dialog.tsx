@@ -16,7 +16,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { Loader2, Plus } from 'lucide-react'
 
 export function CreateProjectDialog() {
@@ -39,8 +39,8 @@ export function CreateProjectDialog() {
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.message || 'Failed to create project')
+        const errorData = await response.json()
+        throw new Error(errorData.error || errorData.message || 'Failed to create project')
       }
 
       const project = await response.json()

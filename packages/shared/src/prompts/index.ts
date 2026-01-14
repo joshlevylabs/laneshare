@@ -9,8 +9,8 @@ export * from './agent-prompts'
 // Re-export context AI prompts
 export * from './context-ai'
 
-// Re-export system map prompts
-export * from './system-map-prompts'
+// Re-export repo documentation prompts (Claude Code wrapper)
+export * from './repo-docs'
 
 export interface LanePilotContext {
   task?: Task

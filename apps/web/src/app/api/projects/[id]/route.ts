@@ -2,9 +2,16 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
+const aiModelSchema = z.enum(['gpt-4o', 'gpt-4o-mini', 'gpt-5', 'o1', 'o1-mini'])
+
+const projectSettingsSchema = z.object({
+  ai_model: aiModelSchema,
+}).optional()
+
 const updateProjectSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).nullable().optional(),
+  settings: projectSettingsSchema,
 })
 
 export async function GET(

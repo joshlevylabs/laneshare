@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { formatRelativeTime } from '@laneshare/shared'
 import { Progress } from '@/components/ui/progress'
-import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink, Bell, BellOff } from 'lucide-react'
+import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink, Bell, BellOff, FileText, Sparkles, CheckCircle, AlertCircle } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -35,11 +35,13 @@ interface Repo {
   installed_at: string
   sync_progress: number | null
   sync_total: number | null
-  sync_stage: 'discovering' | 'indexing' | 'embedding' | 'generating_docs' | null
+  sync_stage: 'discovering' | 'indexing' | 'embedding' | null
   has_updates: boolean
   auto_sync_enabled: boolean
   last_synced_commit_sha: string | null
   latest_commit_sha: string | null
+  doc_status: 'PENDING' | 'GENERATING' | 'READY' | 'NEEDS_REVIEW' | 'ERROR' | null
+  doc_bundle_id: string | null
 }
 
 interface ReposListProps {
@@ -59,6 +61,7 @@ export function ReposList({ repos, projectId }: ReposListProps) {
   const [syncingRepos, setSyncingRepos] = useState<Set<string>>(new Set())
   const [deletingRepos, setDeletingRepos] = useState<Set<string>>(new Set())
   const [togglingAutoSync, setTogglingAutoSync] = useState<Set<string>>(new Set())
+  const [generatingDocs, setGeneratingDocs] = useState<Set<string>>(new Set())
   const [repoProgress, setRepoProgress] = useState<Record<string, SyncProgress>>({})
 
   const getStageLabel = (stage: string | null): string => {
@@ -69,8 +72,6 @@ export function ReposList({ repos, projectId }: ReposListProps) {
         return 'Indexing files...'
       case 'embedding':
         return 'Generating embeddings...'
-      case 'generating_docs':
-        return 'Generating documentation...'
       default:
         return 'Syncing...'
     }
@@ -228,6 +229,84 @@ export function ReposList({ repos, projectId }: ReposListProps) {
     }
   }
 
+  const handleGenerateDocs = async (repoId: string) => {
+    setGeneratingDocs((prev) => new Set(prev).add(repoId))
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/repos/${repoId}/docs/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate documentation')
+      }
+
+      if (data.skipped) {
+        toast({
+          title: 'Documentation Up to Date',
+          description: 'No changes detected since last generation.',
+        })
+        setGeneratingDocs((prev) => {
+          const next = new Set(prev)
+          next.delete(repoId)
+          return next
+        })
+      } else {
+        toast({
+          title: 'Generation Started',
+          description: 'Documentation generation is in progress. This may take a few minutes.',
+        })
+
+        // Poll for completion
+        const checkStatus = async () => {
+          const statusRes = await fetch(`/api/repos/${repoId}`)
+          if (statusRes.ok) {
+            const repo = await statusRes.json()
+            if (repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW' || repo.doc_status === 'ERROR') {
+              setGeneratingDocs((prev) => {
+                const next = new Set(prev)
+                next.delete(repoId)
+                return next
+              })
+              router.refresh()
+
+              if (repo.doc_status === 'ERROR') {
+                toast({
+                  variant: 'destructive',
+                  title: 'Documentation Generation Failed',
+                  description: 'An error occurred while generating documentation.',
+                })
+              } else {
+                toast({
+                  title: 'Documentation Ready',
+                  description: 'Click "View Docs" to see the generated documentation.',
+                })
+              }
+              return
+            }
+          }
+          setTimeout(checkStatus, 3000)
+        }
+        checkStatus()
+      }
+    } catch (error) {
+      setGeneratingDocs((prev) => {
+        const next = new Set(prev)
+        next.delete(repoId)
+        return next
+      })
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to generate documentation',
+      })
+    }
+  }
+
   if (repos.length === 0) {
     return (
       <Card className="border-dashed">
@@ -277,6 +356,25 @@ export function ReposList({ repos, projectId }: ReposListProps) {
                   {repo.has_updates && !isSyncing && (
                     <Badge variant="outline" className="border-blue-500 text-blue-500">
                       Update available
+                    </Badge>
+                  )}
+                  {/* Doc status badge */}
+                  {repo.doc_status === 'READY' && (
+                    <Badge variant="outline" className="border-green-500 text-green-500 gap-1">
+                      <CheckCircle className="h-3 w-3" />
+                      Docs Ready
+                    </Badge>
+                  )}
+                  {repo.doc_status === 'NEEDS_REVIEW' && (
+                    <Badge variant="outline" className="border-yellow-500 text-yellow-500 gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      Docs Need Review
+                    </Badge>
+                  )}
+                  {repo.doc_status === 'GENERATING' && (
+                    <Badge variant="outline" className="border-purple-500 text-purple-500 gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Generating Docs
                     </Badge>
                   )}
                   <Badge
@@ -353,6 +451,62 @@ export function ReposList({ repos, projectId }: ReposListProps) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* Docs Buttons - Split into Generate and View */}
+                  {repo.status === 'SYNCED' && (
+                    <>
+                      {/* Generate Docs button - only when no docs or error */}
+                      {(!repo.doc_status || repo.doc_status === 'PENDING' || repo.doc_status === 'ERROR') && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleGenerateDocs(repo.id)}
+                          disabled={generatingDocs.has(repo.id)}
+                        >
+                          {generatingDocs.has(repo.id) ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="mr-2 h-4 w-4" />
+                              Generate Docs
+                            </>
+                          )}
+                        </Button>
+                      )}
+
+                      {/* Generating status */}
+                      {repo.doc_status === 'GENERATING' && !generatingDocs.has(repo.id) && (
+                        <Button variant="outline" size="sm" disabled>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Generating...
+                        </Button>
+                      )}
+
+                      {/* View Docs button - when docs are ready */}
+                      {(repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW') && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => router.push(`/projects/${projectId}/repos/${repo.id}/docs`)}
+                        >
+                          {repo.doc_status === 'NEEDS_REVIEW' ? (
+                            <>
+                              <AlertCircle className="mr-2 h-4 w-4" />
+                              Review Docs
+                            </>
+                          ) : (
+                            <>
+                              <FileText className="mr-2 h-4 w-4" />
+                              View Docs
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </>
+                  )}
+
                   <Button
                     variant="outline"
                     size="sm"

@@ -1,11 +1,12 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import { TASK_TYPE_HIERARCHY, VALID_PARENT_TYPES, type TaskType, type HierarchyLevel } from '@laneshare/shared'
 
 const updateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(10000).nullable().optional(),
-  type: z.enum(['EPIC', 'STORY', 'TASK', 'BUG', 'SPIKE']).optional(),
+  type: z.enum(['EPIC', 'STORY', 'FEATURE', 'TASK', 'BUG', 'SPIKE', 'SUBTASK']).optional(),
   status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'DONE']).optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).optional(),
   labels: z.array(z.string()).optional(),
@@ -96,6 +97,70 @@ export async function PATCH(
       { error: 'Invalid input', details: result.error.flatten() },
       { status: 400 }
     )
+  }
+
+  // If type is being changed, validate hierarchy constraints
+  if (result.data.type) {
+    const newType = result.data.type as TaskType
+    const newLevel = TASK_TYPE_HIERARCHY[newType]
+
+    // Fetch current task to check parent
+    const { data: currentTask } = await supabase
+      .from('tasks')
+      .select('id, type, parent_task_id')
+      .eq('id', params.taskId)
+      .eq('project_id', params.id)
+      .single()
+
+    if (!currentTask) {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+    }
+
+    // If task has a parent, validate that new type can have that parent type
+    if (currentTask.parent_task_id) {
+      const { data: parentTask } = await supabase
+        .from('tasks')
+        .select('id, type')
+        .eq('id', currentTask.parent_task_id)
+        .single()
+
+      if (parentTask) {
+        const validParentTypes = VALID_PARENT_TYPES[newLevel] || []
+        if (!validParentTypes.includes(parentTask.type as TaskType)) {
+          return NextResponse.json(
+            {
+              error: 'Invalid type change',
+              details: `Cannot change to ${newType} because parent task is ${parentTask.type}. ${newType} can only be a child of: ${validParentTypes.join(', ') || 'nothing (top level only)'}`
+            },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
+    // Check if task has children that would become invalid
+    const { data: childTasks } = await supabase
+      .from('tasks')
+      .select('id, type')
+      .eq('parent_task_id', params.taskId)
+
+    if (childTasks && childTasks.length > 0) {
+      for (const child of childTasks) {
+        const childType = child.type as TaskType
+        const childLevel = TASK_TYPE_HIERARCHY[childType]
+        const validParentTypesForChild = VALID_PARENT_TYPES[childLevel] || []
+
+        if (!validParentTypesForChild.includes(newType)) {
+          return NextResponse.json(
+            {
+              error: 'Invalid type change',
+              details: `Cannot change to ${newType} because it has ${childType} children. ${childType} can only be a child of: ${validParentTypesForChild.join(', ')}`
+            },
+            { status: 400 }
+          )
+        }
+      }
+    }
   }
 
   const { data: task, error } = await supabase

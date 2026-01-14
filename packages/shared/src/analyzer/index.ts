@@ -226,5 +226,9 @@ function computeSummary(graph: ArchitectureGraph): ArchitectureSummary {
   }
 }
 
-// Re-export utilities
-export { generateNodeId, generateEdgeId, generateEvidenceId } from './utils/ids'
+// Re-export utilities with distinct names to avoid conflicts with system-map exports
+export {
+  generateNodeId as generateArchNodeId,
+  generateEdgeId as generateArchEdgeId,
+  generateEvidenceId,
+} from './utils/ids'

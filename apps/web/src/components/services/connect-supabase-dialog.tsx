@@ -14,7 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { Loader2, Plus, CheckCircle2, Database } from 'lucide-react'
 
 interface ConnectSupabaseDialogProps {
@@ -29,7 +29,7 @@ export function ConnectSupabaseDialog({ projectId }: ConnectSupabaseDialogProps)
   const [isLoading, setIsLoading] = useState(false)
 
   const [supabaseUrl, setSupabaseUrl] = useState('')
-  const [serviceRoleKey, setServiceRoleKey] = useState('')
+  const [accessToken, setAccessToken] = useState('')
   const [displayName, setDisplayName] = useState('')
 
   const handleValidate = async () => {
@@ -42,7 +42,7 @@ export function ConnectSupabaseDialog({ projectId }: ConnectSupabaseDialogProps)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           supabase_url: supabaseUrl,
-          service_role_key: serviceRoleKey,
+          access_token: accessToken,
         }),
       })
 
@@ -72,7 +72,7 @@ export function ConnectSupabaseDialog({ projectId }: ConnectSupabaseDialogProps)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           supabase_url: supabaseUrl,
-          service_role_key: serviceRoleKey,
+          access_token: accessToken,
           display_name: displayName || extractProjectName(supabaseUrl),
         }),
       })
@@ -109,7 +109,7 @@ export function ConnectSupabaseDialog({ projectId }: ConnectSupabaseDialogProps)
     setOpen(false)
     setStep('form')
     setSupabaseUrl('')
-    setServiceRoleKey('')
+    setAccessToken('')
     setDisplayName('')
   }
 
@@ -123,7 +123,7 @@ export function ConnectSupabaseDialog({ projectId }: ConnectSupabaseDialogProps)
     }
   }
 
-  const isValid = supabaseUrl.length > 0 && serviceRoleKey.length > 20
+  const isValid = supabaseUrl.length > 0 && accessToken.length > 20
 
   return (
     <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : handleClose())}>
@@ -161,17 +161,25 @@ export function ConnectSupabaseDialog({ projectId }: ConnectSupabaseDialogProps)
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="service-role-key">Service Role Key</Label>
+                <Label htmlFor="access-token">Access Token</Label>
                 <Input
-                  id="service-role-key"
+                  id="access-token"
                   type="password"
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                  value={serviceRoleKey}
-                  onChange={(e) => setServiceRoleKey(e.target.value)}
+                  placeholder="sbp_..."
+                  value={accessToken}
+                  onChange={(e) => setAccessToken(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Your service role key provides admin access. It will be encrypted and stored
-                  securely.
+                  Create an access token at{' '}
+                  <a
+                    href="https://supabase.com/dashboard/account/tokens"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-foreground"
+                  >
+                    supabase.com/dashboard/account/tokens
+                  </a>
+                  . It will be encrypted and stored securely.
                 </p>
               </div>
 

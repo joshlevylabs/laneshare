@@ -4,7 +4,7 @@ import { z } from 'zod'
 
 const createProjectSchema = z.object({
   name: z.string().min(1).max(100),
-  description: z.string().max(500).optional(),
+  description: z.string().max(5000).optional(),
 })
 
 export async function GET() {
@@ -38,110 +38,138 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  // Use regular client to verify authentication
-  const authClient = createServerSupabaseClient()
-  const {
-    data: { user },
-  } = await authClient.auth.getUser()
+  try {
+    // Use regular client to verify authentication
+    const authClient = createServerSupabaseClient()
+    const {
+      data: { user },
+    } = await authClient.auth.getUser()
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-  console.log('Creating project for user:', user.id, user.email)
+    console.log('Creating project for user:', user.id, user.email)
 
-  const body = await request.json()
-  const result = createProjectSchema.safeParse(body)
+    const body = await request.json()
+    console.log('Request body:', JSON.stringify(body))
+    const result = createProjectSchema.safeParse(body)
 
-  if (!result.success) {
-    return NextResponse.json(
-      { error: 'Invalid input', details: result.error.flatten() },
-      { status: 400 }
-    )
-  }
+    if (!result.success) {
+      console.log('Validation failed:', JSON.stringify(result.error.flatten()))
+      return NextResponse.json(
+        { error: 'Invalid input', details: result.error.flatten() },
+        { status: 400 }
+      )
+    }
 
-  const { name, description } = result.data
+    const { name, description } = result.data
 
-  // Use service role client for database operations (bypasses RLS)
-  const supabase = createServiceRoleClient()
+    // Use service role client for database operations (bypasses RLS)
+    const supabase = createServiceRoleClient()
 
-  // Check if profile exists
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('id', user.id)
-    .single()
+    // Check if profile exists, create if missing
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', user.id)
+      .single()
 
-  if (profileError || !profile) {
-    console.error('Profile not found for user:', user.id, profileError)
-    return NextResponse.json(
-      { error: 'Profile not found. Please try logging out and back in.' },
-      { status: 400 }
-    )
-  }
+    if (profileError || !profile) {
+      console.log('Profile not found, creating profile for user:', user.id)
+      console.log('Profile error details:', profileError)
+      const { error: createProfileError } = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          email: user.email!,
+          full_name: user.user_metadata?.full_name || null,
+          avatar_url: user.user_metadata?.avatar_url || null,
+        })
 
-  // Create project
-  const { data: project, error: projectError } = await supabase
-    .from('projects')
-    .insert({
-      owner_id: user.id,
-      name,
-      description: description || null,
+      if (createProfileError) {
+        console.error('Failed to create profile:', createProfileError)
+        return NextResponse.json(
+          { error: 'Failed to create user profile. Please try again.' },
+          { status: 500 }
+        )
+      }
+      console.log('Profile created successfully')
+    } else {
+      console.log('Profile exists:', profile)
+    }
+
+    // Create project
+    console.log('Creating project with name:', name)
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .insert({
+        owner_id: user.id,
+        name,
+        description: description || null,
+      })
+      .select()
+      .single()
+
+    if (projectError) {
+      console.error('Project creation error:', projectError)
+      return NextResponse.json({ error: projectError.message }, { status: 500 })
+    }
+    console.log('Project created:', project.id)
+
+    // Add owner as member
+    const { error: memberError } = await supabase.from('project_members').insert({
+      project_id: project.id,
+      user_id: user.id,
+      role: 'OWNER',
     })
-    .select()
-    .single()
 
-  if (projectError) {
-    console.error('Project creation error:', projectError)
-    return NextResponse.json({ error: projectError.message }, { status: 500 })
+    if (memberError) {
+      // Rollback project creation
+      await supabase.from('projects').delete().eq('id', project.id)
+      return NextResponse.json({ error: memberError.message }, { status: 500 })
+    }
+
+    // Create default documentation pages
+    const defaultDocs = [
+      {
+        project_id: project.id,
+        slug: 'architecture/overview',
+        title: 'Architecture Overview',
+        category: 'architecture' as const,
+        markdown: `# Architecture Overview\n\nThis document describes the overall architecture of the project.\n\n## Components\n\n*Add your architecture documentation here*`,
+      },
+      {
+        project_id: project.id,
+        slug: 'features/index',
+        title: 'Features',
+        category: 'features' as const,
+        markdown: `# Features\n\nThis document lists the main features of the project.\n\n*Add your feature documentation here*`,
+      },
+      {
+        project_id: project.id,
+        slug: 'decisions/index',
+        title: 'Decision Log',
+        category: 'decisions' as const,
+        markdown: `# Decision Log\n\nThis document tracks architectural decisions made in the project.\n\n*Decision entries will be added here*`,
+      },
+      {
+        project_id: project.id,
+        slug: 'status/current',
+        title: 'Project Status',
+        category: 'status' as const,
+        markdown: `# Project Status\n\nCurrent status and progress of the project.\n\n*Status updates will be added here*`,
+      },
+    ]
+
+    await supabase.from('doc_pages').insert(defaultDocs)
+
+    return NextResponse.json(project, { status: 201 })
+  } catch (error) {
+    console.error('Unhandled error in POST /api/projects:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'An unexpected error occurred' },
+      { status: 500 }
+    )
   }
-
-  // Add owner as member
-  const { error: memberError } = await supabase.from('project_members').insert({
-    project_id: project.id,
-    user_id: user.id,
-    role: 'OWNER',
-  })
-
-  if (memberError) {
-    // Rollback project creation
-    await supabase.from('projects').delete().eq('id', project.id)
-    return NextResponse.json({ error: memberError.message }, { status: 500 })
-  }
-
-  // Create default documentation pages
-  const defaultDocs = [
-    {
-      project_id: project.id,
-      slug: 'architecture/overview',
-      title: 'Architecture Overview',
-      category: 'architecture' as const,
-      markdown: `# Architecture Overview\n\nThis document describes the overall architecture of the project.\n\n## Components\n\n*Add your architecture documentation here*`,
-    },
-    {
-      project_id: project.id,
-      slug: 'features/index',
-      title: 'Features',
-      category: 'features' as const,
-      markdown: `# Features\n\nThis document lists the main features of the project.\n\n*Add your feature documentation here*`,
-    },
-    {
-      project_id: project.id,
-      slug: 'decisions/index',
-      title: 'Decision Log',
-      category: 'decisions' as const,
-      markdown: `# Decision Log\n\nThis document tracks architectural decisions made in the project.\n\n*Decision entries will be added here*`,
-    },
-    {
-      project_id: project.id,
-      slug: 'status/current',
-      title: 'Project Status',
-      category: 'status' as const,
-      markdown: `# Project Status\n\nCurrent status and progress of the project.\n\n*Status updates will be added here*`,
-    },
-  ]
-
-  await supabase.from('doc_pages').insert(defaultDocs)
-
-  return NextResponse.json(project, { status: 201 })
 }

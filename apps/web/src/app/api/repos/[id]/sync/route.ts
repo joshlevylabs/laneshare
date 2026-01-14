@@ -1,7 +1,8 @@
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { GitHubClient } from '@/lib/github'
 import { getEmbeddingProvider } from '@/lib/embeddings'
-import { runDocGeneration } from '@/lib/doc-generator'
+// Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+// import { runDocGeneration } from '@/lib/doc-generator'
 import { chunkContent, estimateTokens, shouldIndexFile, detectLanguage } from '@laneshare/shared'
 import { NextResponse } from 'next/server'
 
@@ -219,23 +220,8 @@ async function syncRepository(
     }
   }
 
-  // Update stage to generating docs
-  await supabase
-    .from('repos')
-    .update({ sync_stage: 'generating_docs' })
-    .eq('id', repoId)
-
-  // Trigger documentation generation and wait for completion before marking as synced
-  try {
-    const docResult = await runDocGeneration(repo.project_id, repoId, supabase)
-    if (docResult.errors.length > 0) {
-      console.log(`[DocGen] Completed with ${docResult.errors.length} errors:`, docResult.errors)
-    } else {
-      console.log(`[DocGen] Successfully generated documentation for repo ${repoId}`)
-    }
-  } catch (error) {
-    console.error('[DocGen] Documentation generation failed:', error)
-  }
+  // Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+  // Users can create documentation using the /documents/new wizard which uses LanePilot
 
   // Update repo status to synced, store commit SHA, and clear progress fields
   await supabase

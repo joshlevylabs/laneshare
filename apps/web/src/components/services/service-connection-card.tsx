@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { ConnectSupabaseDialog } from './connect-supabase-dialog'
 import { ConnectVercelDialog } from './connect-vercel-dialog'
+import { ConnectOpenApiDialog } from './connect-openapi-dialog'
 import {
   Loader2,
   RefreshCw,
@@ -204,9 +205,11 @@ export function ServiceConnectionCard({
             {isAdmin ? (
               service === 'supabase' ? (
                 <ConnectSupabaseDialog projectId={projectId} />
-              ) : (
+              ) : service === 'vercel' ? (
                 <ConnectVercelDialog projectId={projectId} />
-              )
+              ) : service === 'openapi' ? (
+                <ConnectOpenApiDialog projectId={projectId} />
+              ) : null
             ) : (
               <p className="text-sm text-muted-foreground">
                 Only project maintainers can connect services.

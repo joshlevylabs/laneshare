@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,8 @@ import { TaskBacklogView } from './views/backlog-view'
 import { TaskTableView } from './views/table-view'
 import { TaskTimelineView } from './views/timeline-view'
 import { CreateTaskDialog } from './create-task-dialog'
-import { TaskDetailDrawer } from './task-detail-drawer'
+import { TaskDetailModal } from './task-detail-modal'
+import { PRDInputSection } from '@/components/prd'
 import { LayoutGrid, List, Calendar, Table2, Plus } from 'lucide-react'
 import type { Task, Sprint, TaskStatus, TaskType, TaskPriority } from '@laneshare/shared'
 
@@ -27,12 +28,21 @@ interface Repo {
   name: string
 }
 
+interface AvailableContext {
+  services: Array<{ id: string; service: string; display_name: string }>
+  assets: Array<{ id: string; name: string; asset_type: string; service: string }>
+  docs: Array<{ id: string; slug: string; title: string; category?: string }>
+  features: Array<{ id: string; feature_slug: string; feature_name: string; description?: string }>
+  tickets: Array<{ id: string; key: string; title: string; status: string; type: TaskType }>
+}
+
 interface TasksLayoutProps {
   projectId: string
   initialTasks: Task[]
   sprints: Sprint[]
   members: Member[]
   repos: Repo[]
+  availableContext?: AvailableContext
 }
 
 type ViewType = 'board' | 'backlog' | 'table' | 'timeline'
@@ -40,9 +50,10 @@ type ViewType = 'board' | 'backlog' | 'table' | 'timeline'
 export function TasksLayout({
   projectId,
   initialTasks,
-  sprints,
+  sprints: initialSprints,
   members,
   repos,
+  availableContext,
 }: TasksLayoutProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -51,6 +62,7 @@ export function TasksLayout({
   const [currentView, setCurrentView] = useState<ViewType>(initialView)
   const [filters, setFilters] = useState<TaskFilters>(defaultFilters)
   const [tasks, setTasks] = useState<Task[]>(initialTasks)
+  const [sprints, setSprints] = useState<Sprint[]>(initialSprints)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
 
@@ -134,10 +146,50 @@ export function TasksLayout({
     }
   }
 
+  const handleSprintCreated = useCallback((newSprint: Sprint) => {
+    setSprints((prev) => [newSprint, ...prev])
+  }, [])
+
+  const handleSprintUpdate = useCallback((updatedSprint: Sprint) => {
+    setSprints((prev) =>
+      prev.map((s) => (s.id === updatedSprint.id ? updatedSprint : s))
+    )
+  }, [])
+
+  const handleSprintDelete = useCallback((sprintId: string) => {
+    setSprints((prev) => prev.filter((s) => s.id !== sprintId))
+    // Also update tasks that were in this sprint to have no sprint
+    setTasks((prev) =>
+      prev.map((t) => (t.sprint_id === sprintId ? { ...t, sprint_id: undefined } : t))
+    )
+  }, [])
+
+  const handleTasksCreatedFromPRD = useCallback(async () => {
+    // Refresh tasks from the server
+    try {
+      const response = await fetch(`/api/projects/${projectId}/tasks`)
+      if (response.ok) {
+        const newTasks = await response.json()
+        setTasks(newTasks)
+      }
+    } catch (error) {
+      console.error('Error refreshing tasks:', error)
+    }
+  }, [projectId])
+
   const selectedTask = tasks.find((t) => t.id === selectedTaskId)
 
   return (
     <div className="space-y-4">
+      {/* PRD to Sprint Section */}
+      <PRDInputSection
+        projectId={projectId}
+        members={members}
+        sprints={sprints}
+        onSprintCreated={handleSprintCreated}
+        onTasksCreated={handleTasksCreatedFromPRD}
+      />
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Tasks</h1>
@@ -153,6 +205,8 @@ export function TasksLayout({
           members={members}
           repos={repos}
           sprints={sprints}
+          tasks={tasks.map(t => ({ id: t.id, key: t.key, title: t.title, type: t.type }))}
+          availableContext={availableContext}
           onTaskCreated={handleTaskCreate}
         />
       </div>
@@ -193,6 +247,8 @@ export function TasksLayout({
             members={members}
             onTaskClick={handleTaskClick}
             onTaskUpdate={handleTaskUpdate}
+            onSprintUpdate={handleSprintUpdate}
+            onSprintDelete={handleSprintDelete}
           />
         </TabsContent>
 
@@ -204,6 +260,8 @@ export function TasksLayout({
             members={members}
             onTaskClick={handleTaskClick}
             onTaskUpdate={handleTaskUpdate}
+            onSprintUpdate={handleSprintUpdate}
+            onSprintDelete={handleSprintDelete}
           />
         </TabsContent>
 
@@ -228,7 +286,7 @@ export function TasksLayout({
         </TabsContent>
       </Tabs>
 
-      <TaskDetailDrawer
+      <TaskDetailModal
         open={isDrawerOpen}
         onOpenChange={setIsDrawerOpen}
         task={selectedTask || null}

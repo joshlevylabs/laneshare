@@ -1,13 +1,17 @@
-import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
-import { runDocGeneration } from '@/lib/doc-generator'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+// Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+// import { runDocGeneration } from '@/lib/doc-generator'
 import { NextResponse } from 'next/server'
 
+/**
+ * @deprecated This endpoint is deprecated. Use the Document Builder at /projects/[id]/documents/new instead.
+ * Auto-generated documentation has been replaced with user-created documents via the Document Builder wizard.
+ */
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   const supabase = createServerSupabaseClient()
-  const serviceClient = createServiceRoleClient()
 
   const {
     data: { user },
@@ -17,62 +21,20 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Check project admin status
-  const { data: membership } = await supabase
-    .from('project_members')
-    .select('role')
-    .eq('project_id', params.id)
-    .eq('user_id', user.id)
-    .single()
-
-  if (!membership || !['OWNER', 'MAINTAINER'].includes(membership.role)) {
-    return NextResponse.json(
-      { error: 'Only project owners and maintainers can regenerate documentation' },
-      { status: 403 }
-    )
-  }
-
-  // Get all synced repos for this project
-  const { data: repos, error: reposError } = await supabase
-    .from('repos')
-    .select('id, owner, name, status')
-    .eq('project_id', params.id)
-    .eq('status', 'SYNCED')
-
-  if (reposError) {
-    return NextResponse.json({ error: reposError.message }, { status: 500 })
-  }
-
-  if (!repos || repos.length === 0) {
-    return NextResponse.json(
-      { error: 'No synced repositories found. Please sync a repository first.' },
-      { status: 400 }
-    )
-  }
-
-  // Run doc generation for the first synced repo (this will also handle multi-repo)
-  const primaryRepoId = repos[0].id
-
-  // Start generation in background
-  runDocGeneration(params.id, primaryRepoId, serviceClient)
-    .then((result) => {
-      console.log(`[DocGen] Manual regeneration completed for project ${params.id}:`, {
-        hasArchitecture: !!result.architectureDoc,
-        hasFeatures: !!result.featuresDoc,
-        hasMultiRepo: !!result.multiRepoDoc,
-        errors: result.errors,
-      })
-    })
-    .catch((error) => {
-      console.error(`[DocGen] Manual regeneration failed for project ${params.id}:`, error)
-    })
-
-  return NextResponse.json({
-    message: 'Documentation generation started',
-    repos: repos.map((r) => `${r.owner}/${r.name}`),
-  })
+  // Return deprecation notice instead of running auto-generation
+  return NextResponse.json(
+    {
+      error: 'This endpoint is deprecated',
+      message: 'Auto-generated documentation has been replaced with user-created documents. Please use the Document Builder wizard at /projects/{projectId}/documents/new to create documentation.',
+      redirect: `/projects/${params.id}/documents/new`,
+    },
+    { status: 410 } // 410 Gone - indicates resource is no longer available
+  )
 }
 
+/**
+ * @deprecated This endpoint is deprecated. Use GET /api/projects/[id]/documents instead.
+ */
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
@@ -99,23 +61,25 @@ export async function GET(
     return NextResponse.json({ error: 'Access denied' }, { status: 403 })
   }
 
-  // Get the current state of generated docs
-  const { data: docs } = await supabase
+  // Return legacy doc_pages for backwards compatibility, but include deprecation notice
+  const { data: legacyDocs } = await supabase
     .from('doc_pages')
     .select('slug, title, category, updated_at')
     .eq('project_id', params.id)
     .order('updated_at', { ascending: false })
 
-  // Get synced repos count
-  const { count: syncedReposCount } = await supabase
-    .from('repos')
-    .select('*', { count: 'exact', head: true })
+  // Also get new user-created documents
+  const { data: documents } = await supabase
+    .from('documents')
+    .select('id, slug, title, category, updated_at')
     .eq('project_id', params.id)
-    .eq('status', 'SYNCED')
+    .order('updated_at', { ascending: false })
 
   return NextResponse.json({
-    docs: docs || [],
-    syncedReposCount: syncedReposCount || 0,
-    canGenerate: (syncedReposCount || 0) > 0,
+    deprecated: true,
+    message: 'This endpoint is deprecated. Please use GET /api/projects/{projectId}/documents instead.',
+    legacyDocs: legacyDocs || [],
+    documents: documents || [],
+    redirect: `/api/projects/${params.id}/documents`,
   })
 }

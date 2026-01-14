@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import {
   CONTEXT_AI_SYSTEM_PROMPT,
   buildContextDiscoveryPrompt,
@@ -328,13 +328,18 @@ export async function POST(
   let suggestions: ContextAISuggestion[] = []
 
   try {
-    const anthropic = new Anthropic()
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    })
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+    const response = await openai.chat.completions.create({
+      model: 'gpt-5',
       max_tokens: 2048,
-      system: CONTEXT_AI_SYSTEM_PROMPT,
       messages: [
+        {
+          role: 'system',
+          content: CONTEXT_AI_SYSTEM_PROMPT,
+        },
         {
           role: 'user',
           content: prompt,
@@ -342,8 +347,7 @@ export async function POST(
       ],
     })
 
-    const responseText =
-      response.content[0].type === 'text' ? response.content[0].text : ''
+    const responseText = response.choices[0]?.message?.content || ''
 
     // Parse the response
     const parsed = parseContextDiscoveryResponse(responseText)
@@ -355,10 +359,20 @@ export async function POST(
       // Fallback if parsing fails
       aiResponse = responseText
     }
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error calling Context AI:', error)
-    aiResponse =
-      "I'm sorry, I encountered an error while analyzing the context. Please try again."
+
+    // Check for specific error types
+    if (error instanceof OpenAI.APIError) {
+      const errorMessage = error.message || ''
+      if (errorMessage.includes('insufficient_quota') || errorMessage.includes('rate_limit')) {
+        aiResponse = "The AI service is currently unavailable due to API limits. Please contact your administrator to resolve this issue."
+      } else {
+        aiResponse = `I'm sorry, the AI service returned an error: ${errorMessage || 'Unknown error'}. Please try again later.`
+      }
+    } else {
+      aiResponse = "I'm sorry, I encountered an error while analyzing the context. Please try again."
+    }
   }
 
   // Save the AI's response

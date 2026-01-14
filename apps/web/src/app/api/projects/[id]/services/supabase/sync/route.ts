@@ -6,7 +6,8 @@
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { createSupabaseAdapter } from '@/lib/services'
 import { decrypt } from '@/lib/encryption'
-import { runServiceDocGeneration } from '@/lib/service-doc-generator'
+// Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+// import { runServiceDocGeneration } from '@/lib/service-doc-generator'
 import { NextResponse } from 'next/server'
 import type { SupabaseConfig, SupabaseSecrets, SupabaseSyncStats } from '@/lib/supabase/types'
 
@@ -176,18 +177,8 @@ async function performSync(
       console.log('[Supabase Sync] Warnings:', warnings)
     }
 
-    // Trigger documentation generation in background
-    runServiceDocGeneration(projectId, 'supabase', supabase)
-      .then((result) => {
-        if (result.errors.length > 0) {
-          console.log('[ServiceDocGen] Completed with errors:', result.errors)
-        } else {
-          console.log('[ServiceDocGen] Successfully generated service documentation')
-        }
-      })
-      .catch((error) => {
-        console.error('[ServiceDocGen] Failed:', error)
-      })
+    // Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+    // Users can create documentation using the /documents/new wizard
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'

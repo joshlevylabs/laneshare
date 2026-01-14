@@ -84,6 +84,43 @@ export default async function TasksPage({
     .select('id, owner, name')
     .eq('project_id', params.id)
 
+  // Fetch available context for task creation
+  const [servicesResult, assetsResult, docsResult, featuresResult] = await Promise.all([
+    supabase
+      .from('project_service_connections')
+      .select('id, service, display_name')
+      .eq('project_id', params.id)
+      .eq('status', 'CONNECTED'),
+    supabase
+      .from('service_assets')
+      .select('id, name, asset_type, service')
+      .eq('project_id', params.id)
+      .limit(100),
+    supabase
+      .from('doc_pages')
+      .select('id, slug, title, category')
+      .eq('project_id', params.id),
+    // Get architecture features from the latest snapshot
+    supabase
+      .from('architecture_snapshots')
+      .select('id')
+      .eq('project_id', params.id)
+      .eq('status', 'completed')
+      .order('generated_at', { ascending: false })
+      .limit(1)
+      .single()
+  ])
+
+  // Fetch features if we have a snapshot
+  let featuresData: Array<{ id: string; feature_slug: string; feature_name: string; description?: string }> = []
+  if (featuresResult.data?.id) {
+    const { data: features } = await supabase
+      .from('architecture_features')
+      .select('id, feature_slug, feature_name, description')
+      .eq('snapshot_id', featuresResult.data.id)
+    featuresData = features || []
+  }
+
   // Transform tasks to match the Task type (backward compatible)
   const tasks: Task[] = (tasksData as TaskRow[] | null)?.map((t, index) => ({
     id: t.id,
@@ -140,6 +177,40 @@ export default async function TasksPage({
     avatar_url: m.profiles.avatar_url,
   })) || []
 
+  // Build available context for task creation
+  const availableContext = {
+    services: (servicesResult.data || []).map((s: any) => ({
+      id: s.id,
+      service: s.service,
+      display_name: s.display_name,
+    })),
+    assets: (assetsResult.data || []).map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      asset_type: a.asset_type,
+      service: a.service,
+    })),
+    docs: (docsResult.data || []).map((d: any) => ({
+      id: d.id,
+      slug: d.slug,
+      title: d.title,
+      category: d.category,
+    })),
+    features: featuresData.map((f) => ({
+      id: f.id,
+      feature_slug: f.feature_slug,
+      feature_name: f.feature_name,
+      description: f.description,
+    })),
+    tickets: tasks.map((t) => ({
+      id: t.id,
+      key: t.key,
+      title: t.title,
+      status: t.status,
+      type: t.type,
+    })),
+  }
+
   return (
     <TasksLayout
       projectId={params.id}
@@ -147,6 +218,7 @@ export default async function TasksPage({
       sprints={sprints}
       members={memberProfiles}
       repos={repos || []}
+      availableContext={availableContext}
     />
   )
 }

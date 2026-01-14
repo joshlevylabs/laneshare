@@ -16,7 +16,7 @@ import {
   isBefore,
   isAfter,
 } from 'date-fns'
-import { ChevronLeft, ChevronRight, Bug, Zap, BookOpen, FlaskConical, CheckSquare } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Bug, Zap, BookOpen, FlaskConical, CheckSquare, LayoutList, GitBranch, CornerDownRight } from 'lucide-react'
 import type { Task, Sprint, TaskType } from '@laneshare/shared'
 
 interface TaskTimelineViewProps {
@@ -29,9 +29,21 @@ interface TaskTimelineViewProps {
 const TYPE_ICONS: Record<TaskType, React.ElementType> = {
   EPIC: Zap,
   STORY: BookOpen,
+  FEATURE: LayoutList,
   TASK: CheckSquare,
   BUG: Bug,
   SPIKE: FlaskConical,
+  SUBTASK: GitBranch,
+}
+
+const TYPE_COLORS: Record<TaskType, string> = {
+  EPIC: 'text-purple-500',
+  STORY: 'text-blue-500',
+  FEATURE: 'text-cyan-500',
+  TASK: 'text-green-500',
+  BUG: 'text-red-500',
+  SPIKE: 'text-yellow-500',
+  SUBTASK: 'text-gray-500',
 }
 
 const STATUS_COLORS: Record<string, string> = {

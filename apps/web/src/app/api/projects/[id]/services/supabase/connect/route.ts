@@ -11,7 +11,7 @@ import { z } from 'zod'
 
 const connectSchema = z.object({
   supabase_url: z.string().url('Invalid Supabase URL'),
-  service_role_key: z.string().min(20, 'Invalid service role key'),
+  access_token: z.string().min(20, 'Invalid access token'),
   display_name: z.string().min(1, 'Display name is required').max(100),
 })
 
@@ -56,7 +56,7 @@ export async function POST(
     )
   }
 
-  const { supabase_url, service_role_key, display_name } = validation.data
+  const { supabase_url, access_token, display_name } = validation.data
 
   // Check if a Supabase connection already exists
   const { data: existing } = await supabase
@@ -77,7 +77,7 @@ export async function POST(
   const adapter = createSupabaseAdapter()
   const validationResult = await adapter.validateConnection(
     { supabase_url },
-    { service_role_key }
+    { access_token }
   )
 
   if (!validationResult.valid) {
@@ -88,7 +88,7 @@ export async function POST(
   }
 
   // Encrypt the secrets
-  const secretsToEncrypt = JSON.stringify({ service_role_key })
+  const secretsToEncrypt = JSON.stringify({ access_token })
   const encryptedSecrets = await encrypt(secretsToEncrypt)
 
   // Extract project ref from URL

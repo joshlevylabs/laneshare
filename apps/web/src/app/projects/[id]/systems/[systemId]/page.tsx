@@ -17,42 +17,17 @@ export default async function SystemDetailPage({
     redirect('/login')
   }
 
-  // Fetch system with all related data
+  // Fetch system with flow snapshots
   const { data: system, error } = await supabase
     .from('systems')
     .select(`
       *,
-      system_artifacts (
-        id,
-        kind,
-        content,
-        content_json,
-        created_by,
-        created_at
-      ),
-      system_evidence (
-        id,
-        source_type,
-        source_ref,
-        excerpt,
-        metadata,
-        confidence,
-        created_at
-      ),
       system_flow_snapshots (
         id,
         version,
         graph_json,
         generated_at,
         generated_by,
-        notes
-      ),
-      system_node_verifications (
-        id,
-        node_id,
-        is_verified,
-        verified_by,
-        verified_at,
         notes
       )
     `)
@@ -68,13 +43,6 @@ export default async function SystemDetailPage({
   const latestSnapshot = system.system_flow_snapshots
     ?.sort((a: { version: number }, b: { version: number }) => b.version - a.version)[0]
 
-  // Fetch project name
-  const { data: project } = await supabase
-    .from('projects')
-    .select('name')
-    .eq('id', params.id)
-    .single()
-
   // Check user role
   const { data: membership } = await supabase
     .from('project_members')
@@ -85,22 +53,11 @@ export default async function SystemDetailPage({
 
   const isAdmin = membership?.role === 'OWNER' || membership?.role === 'MAINTAINER'
 
-  // Fetch repos for reference
-  const { data: repos } = await supabase
-    .from('repos')
-    .select('id, owner, name')
-    .eq('project_id', params.id)
-
   return (
     <SystemDetailView
       projectId={params.id}
-      projectName={project?.name || 'Unknown Project'}
       system={system}
       latestSnapshot={latestSnapshot}
-      artifacts={system.system_artifacts || []}
-      evidence={system.system_evidence || []}
-      verifications={system.system_node_verifications || []}
-      repos={repos || []}
       isAdmin={isAdmin}
     />
   )

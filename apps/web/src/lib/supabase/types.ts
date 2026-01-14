@@ -44,6 +44,7 @@ export type Database = {
           owner_id: string
           name: string
           description: string | null
+          settings: ProjectSettings | null
           created_at: string
           updated_at: string
         }
@@ -52,6 +53,7 @@ export type Database = {
           owner_id: string
           name: string
           description?: string | null
+          settings?: ProjectSettings | null
           created_at?: string
           updated_at?: string
         }
@@ -60,6 +62,7 @@ export type Database = {
           owner_id?: string
           name?: string
           description?: string | null
+          settings?: ProjectSettings | null
           created_at?: string
           updated_at?: string
         }
@@ -503,7 +506,7 @@ export type Database = {
           project_id: string
           service: 'supabase' | 'vercel'
           display_name: string
-          status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+          status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'WARNING'
           config_json: Json
           secret_encrypted: string
           last_synced_at: string | null
@@ -517,7 +520,7 @@ export type Database = {
           project_id: string
           service: 'supabase' | 'vercel'
           display_name: string
-          status?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+          status?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'WARNING'
           config_json?: Json
           secret_encrypted: string
           last_synced_at?: string | null
@@ -531,7 +534,7 @@ export type Database = {
           project_id?: string
           service?: 'supabase' | 'vercel'
           display_name?: string
-          status?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
+          status?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'WARNING'
           config_json?: Json
           secret_encrypted?: string
           last_synced_at?: string | null
@@ -583,7 +586,7 @@ export type Database = {
           connection_id: string
           started_at: string
           finished_at: string | null
-          status: 'RUNNING' | 'SUCCESS' | 'ERROR'
+          status: 'RUNNING' | 'SUCCESS' | 'ERROR' | 'WARNING'
           stats_json: Json
           error: string | null
           triggered_by: string | null
@@ -595,7 +598,7 @@ export type Database = {
           connection_id: string
           started_at?: string
           finished_at?: string | null
-          status?: 'RUNNING' | 'SUCCESS' | 'ERROR'
+          status?: 'RUNNING' | 'SUCCESS' | 'ERROR' | 'WARNING'
           stats_json?: Json
           error?: string | null
           triggered_by?: string | null
@@ -607,7 +610,7 @@ export type Database = {
           connection_id?: string
           started_at?: string
           finished_at?: string | null
-          status?: 'RUNNING' | 'SUCCESS' | 'ERROR'
+          status?: 'RUNNING' | 'SUCCESS' | 'ERROR' | 'WARNING'
           stats_json?: Json
           error?: string | null
           triggered_by?: string | null
@@ -679,9 +682,9 @@ export type Database = {
 // CONNECTED SERVICES TYPES
 // ===============================================
 
-export type ServiceType = 'supabase' | 'vercel'
-export type ServiceConnectionStatus = 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
-export type ServiceSyncStatus = 'RUNNING' | 'SUCCESS' | 'ERROR'
+export type ServiceType = 'supabase' | 'vercel' | 'openapi'
+export type ServiceConnectionStatus = 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'WARNING'
+export type ServiceSyncStatus = 'RUNNING' | 'SUCCESS' | 'ERROR' | 'WARNING'
 
 // Supabase-specific asset types
 export type SupabaseAssetType =
@@ -700,7 +703,14 @@ export type VercelAssetType =
   | 'domain'
   | 'env_var'
 
-export type ServiceAssetType = SupabaseAssetType | VercelAssetType
+// OpenAPI-specific asset types
+export type OpenApiAssetType =
+  | 'openapi_spec'
+  | 'endpoint'
+  | 'schema'
+  | 'security_scheme'
+
+export type ServiceAssetType = SupabaseAssetType | VercelAssetType | OpenApiAssetType
 
 // Configuration types for each service
 export interface SupabaseConfig {
@@ -714,18 +724,33 @@ export interface VercelConfig {
   project_ids?: string[]
 }
 
-export type ServiceConfig = SupabaseConfig | VercelConfig
+export interface OpenApiConfig {
+  openapi_url: string
+  api_name?: string
+  api_slug?: string
+  format_hint?: 'json' | 'yaml' | 'auto'
+  normalize_base_url?: boolean
+  spec_fingerprint?: string
+  spec_version?: string
+  spec_title?: string
+}
+
+export type ServiceConfig = SupabaseConfig | VercelConfig | OpenApiConfig
 
 // Secret types for each service (what gets encrypted)
 export interface SupabaseSecrets {
-  service_role_key: string
+  access_token: string
 }
 
 export interface VercelSecrets {
   token: string
 }
 
-export type ServiceSecrets = SupabaseSecrets | VercelSecrets
+export interface OpenApiSecrets {
+  headers?: Record<string, string>
+}
+
+export type ServiceSecrets = SupabaseSecrets | VercelSecrets | OpenApiSecrets
 
 // Stats from sync operations
 export interface SupabaseSyncStats {
@@ -745,7 +770,18 @@ export interface VercelSyncStats {
   env_vars: number
 }
 
-export type ServiceSyncStats = SupabaseSyncStats | VercelSyncStats
+export interface OpenApiSyncStats {
+  endpoints: number
+  schemas: number
+  tags: number
+  security_schemes: number
+  spec_version?: string
+  spec_title?: string
+  base_url?: string
+  spec_fingerprint?: string
+}
+
+export type ServiceSyncStats = SupabaseSyncStats | VercelSyncStats | OpenApiSyncStats
 
 // Asset data payloads
 export interface TableAssetData {
@@ -837,4 +873,97 @@ export interface EnvVarAssetData {
   target: string[] // production, preview, development
   type: string // plain, encrypted, secret
   // Never store the value!
+}
+
+// ===============================================
+// OPENAPI ASSET DATA TYPES
+// ===============================================
+
+export interface OpenApiSpecAssetData {
+  title: string
+  version: string
+  description?: string
+  base_url?: string
+  servers?: Array<{ url: string; description?: string }>
+  openapi_version: string // '3.0.0', '3.1.0', '2.0' (swagger)
+  spec_fingerprint: string
+  endpoint_count: number
+  schema_count: number
+  tag_count: number
+  security_scheme_count: number
+  tags?: Array<{ name: string; description?: string }>
+}
+
+export interface OpenApiEndpointAssetData {
+  method: string // GET, POST, PUT, DELETE, PATCH, etc.
+  path: string
+  operationId?: string
+  summary?: string
+  description?: string
+  tags?: string[]
+  deprecated?: boolean
+  parameters?: OpenApiParameter[]
+  requestBody?: OpenApiRequestBody
+  responses?: Record<string, OpenApiResponse>
+  security?: Array<Record<string, string[]>>
+}
+
+export interface OpenApiParameter {
+  name: string
+  in: 'query' | 'path' | 'header' | 'cookie'
+  required?: boolean
+  description?: string
+  schema?: OpenApiSchemaRef
+  deprecated?: boolean
+}
+
+export interface OpenApiRequestBody {
+  description?: string
+  required?: boolean
+  content?: Record<string, { schema?: OpenApiSchemaRef }>
+}
+
+export interface OpenApiResponse {
+  description?: string
+  content?: Record<string, { schema?: OpenApiSchemaRef }>
+}
+
+export interface OpenApiSchemaRef {
+  type?: string
+  format?: string
+  $ref?: string
+  items?: OpenApiSchemaRef
+  properties?: Record<string, OpenApiSchemaRef>
+  required?: string[]
+  description?: string
+  enum?: string[]
+  example?: unknown
+}
+
+export interface OpenApiSchemaAssetData {
+  name: string
+  type?: string
+  description?: string
+  properties?: Record<string, OpenApiSchemaRef>
+  required?: string[]
+  enum?: string[]
+}
+
+export interface OpenApiSecuritySchemeAssetData {
+  name: string
+  type: string // apiKey, http, oauth2, openIdConnect
+  description?: string
+  in?: string // query, header, cookie (for apiKey)
+  scheme?: string // bearer, basic (for http)
+  bearerFormat?: string
+}
+
+// ===============================================
+// PROJECT SETTINGS
+// ===============================================
+
+export type AIModel = 'gpt-4o' | 'gpt-4o-mini' | 'gpt-5' | 'o1' | 'o1-mini'
+
+export interface ProjectSettings {
+  ai_model: AIModel
 }

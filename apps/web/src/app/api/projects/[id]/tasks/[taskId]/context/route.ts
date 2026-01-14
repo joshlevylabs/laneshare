@@ -8,19 +8,20 @@ import type {
   TaskDocLink,
   TaskFeatureLink,
   TaskTicketLink,
+  TaskRepoDocLink,
   TaskLinkedContext,
   TicketLinkType,
 } from '@laneshare/shared'
 
 const addLinkSchema = z.object({
-  type: z.enum(['service', 'asset', 'repo', 'doc', 'feature', 'ticket']),
+  type: z.enum(['service', 'asset', 'repo', 'doc', 'feature', 'ticket', 'repo_doc']),
   id: z.string().uuid(),
   // Optional: for ticket links, specify the relationship type
   linkType: z.enum(['related', 'blocks', 'blocked_by', 'duplicates', 'duplicated_by']).optional(),
 })
 
 const removeLinkSchema = z.object({
-  type: z.enum(['service', 'asset', 'repo', 'doc', 'feature', 'ticket']),
+  type: z.enum(['service', 'asset', 'repo', 'doc', 'feature', 'ticket', 'repo_doc']),
   linkId: z.string().uuid(),
 })
 
@@ -52,7 +53,7 @@ export async function GET(
   }
 
   // Fetch all linked context in parallel
-  const [servicesResult, assetsResult, reposResult, docsResult, featuresResult, ticketsResult] = await Promise.all([
+  const [servicesResult, assetsResult, reposResult, docsResult, featuresResult, ticketsResult, repoDocsResult] = await Promise.all([
     supabase
       .from('task_service_links')
       .select(`
@@ -95,6 +96,7 @@ export async function GET(
       .eq('task_id', params.taskId)
       .order('created_at', { ascending: false }),
 
+    // Try new documents table first, with fallback to doc_pages for legacy links
     supabase
       .from('task_doc_links')
       .select(`
@@ -103,8 +105,7 @@ export async function GET(
         project_id,
         doc_id,
         created_by,
-        created_at,
-        doc:doc_pages(id, slug, title, category)
+        created_at
       `)
       .eq('task_id', params.taskId)
       .order('created_at', { ascending: false }),
@@ -137,16 +138,64 @@ export async function GET(
       `)
       .eq('task_id', params.taskId)
       .order('created_at', { ascending: false }),
+
+    supabase
+      .from('task_repo_doc_links')
+      .select(`
+        id,
+        task_id,
+        project_id,
+        repo_doc_page_id,
+        created_by,
+        created_at,
+        repo_doc_page:repo_doc_pages(id, slug, title, category, repo_id, needs_review, repo:repos(owner, name))
+      `)
+      .eq('task_id', params.taskId)
+      .order('created_at', { ascending: false }),
   ])
+
+  // Fetch document details for doc links (from new documents table, fallback to doc_pages)
+  const docLinks = docsResult.data || []
+  const docIds = docLinks.map((l) => l.doc_id).filter(Boolean)
+
+  let docsWithDetails: TaskDocLink[] = []
+  if (docIds.length > 0) {
+    // First try the new documents table
+    const { data: docs } = await supabase
+      .from('documents')
+      .select('id, slug, title, category')
+      .in('id', docIds)
+
+    const docsMap = new Map((docs || []).map((d) => [d.id, d]))
+
+    // For any missing, try doc_pages (legacy)
+    const missingDocIds = docIds.filter((id) => !docsMap.has(id))
+    if (missingDocIds.length > 0) {
+      const { data: legacyDocs } = await supabase
+        .from('doc_pages')
+        .select('id, slug, title, category')
+        .in('id', missingDocIds)
+
+      for (const d of legacyDocs || []) {
+        docsMap.set(d.id, d)
+      }
+    }
+
+    docsWithDetails = docLinks.map((link) => ({
+      ...link,
+      doc: docsMap.get(link.doc_id) || null,
+    })) as unknown as TaskDocLink[]
+  }
 
   // Transform Supabase results to match our types (use 'as unknown as' for nested relations)
   const linkedContext: TaskLinkedContext = {
     services: (servicesResult.data || []) as unknown as TaskServiceLink[],
     assets: (assetsResult.data || []) as unknown as TaskAssetLink[],
     repos: (reposResult.data || []) as unknown as TaskRepoLink[],
-    docs: (docsResult.data || []) as unknown as TaskDocLink[],
+    docs: docsWithDetails,
     features: (featuresResult.data || []) as unknown as TaskFeatureLink[],
     tickets: (ticketsResult.data || []) as unknown as TaskTicketLink[],
+    repoDocs: (repoDocsResult.data || []) as unknown as TaskRepoDocLink[],
   }
 
   return NextResponse.json(linkedContext)
@@ -257,6 +306,7 @@ export async function POST(
       break
 
     case 'doc':
+      // Insert the link
       ({ data, error } = await supabase
         .from('task_doc_links')
         .insert({
@@ -271,10 +321,31 @@ export async function POST(
           project_id,
           doc_id,
           created_by,
-          created_at,
-          doc:doc_pages(id, slug, title, category)
+          created_at
         `)
         .single())
+
+      // Fetch doc details from documents table (or doc_pages for legacy)
+      if (data && !error) {
+        let docInfo = null
+        const { data: newDoc } = await supabase
+          .from('documents')
+          .select('id, slug, title, category')
+          .eq('id', id)
+          .single()
+
+        if (newDoc) {
+          docInfo = newDoc
+        } else {
+          const { data: legacyDoc } = await supabase
+            .from('doc_pages')
+            .select('id, slug, title, category')
+            .eq('id', id)
+            .single()
+          docInfo = legacyDoc
+        }
+        data = { ...data, doc: docInfo }
+      }
       break
 
     case 'feature':
@@ -317,6 +388,27 @@ export async function POST(
           created_by,
           created_at,
           linked_task:tasks!linked_task_id(id, key, title, status, type)
+        `)
+        .single())
+      break
+
+    case 'repo_doc':
+      ({ data, error } = await supabase
+        .from('task_repo_doc_links')
+        .insert({
+          task_id: params.taskId,
+          project_id: params.id,
+          repo_doc_page_id: id,
+          created_by: user.id,
+        })
+        .select(`
+          id,
+          task_id,
+          project_id,
+          repo_doc_page_id,
+          created_by,
+          created_at,
+          repo_doc_page:repo_doc_pages(id, slug, title, category, repo_id, needs_review, repo:repos(owner, name))
         `)
         .single())
       break
@@ -430,6 +522,14 @@ export async function DELETE(
     case 'ticket':
       ({ error } = await supabase
         .from('task_ticket_links')
+        .delete()
+        .eq('id', linkId)
+        .eq('task_id', params.taskId))
+      break
+
+    case 'repo_doc':
+      ({ error } = await supabase
+        .from('task_repo_doc_links')
         .delete()
         .eq('id', linkId)
         .eq('task_id', params.taskId))

@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useToast } from '@/components/ui/use-toast'
+import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
 import { SELECT_SENTINELS, assigneeSelect } from '@laneshare/shared'
 
@@ -29,7 +29,7 @@ interface Task {
   id: string
   title: string
   description: string | null
-  status: 'BACKLOG' | 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE'
+  status: 'BACKLOG' | 'TODO' | 'IN_PROGRESS' | 'IN_REVIEW' | 'BLOCKED' | 'DONE'
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
   assignee_id: string | null
   repo_scope: string[] | null

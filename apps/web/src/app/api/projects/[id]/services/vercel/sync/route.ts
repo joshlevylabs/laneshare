@@ -6,7 +6,8 @@
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { createVercelAdapter } from '@/lib/services'
 import { decrypt } from '@/lib/encryption'
-import { runServiceDocGeneration } from '@/lib/service-doc-generator'
+// Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+// import { runServiceDocGeneration } from '@/lib/service-doc-generator'
 import { NextResponse } from 'next/server'
 import type { VercelConfig, VercelSecrets, VercelSyncStats } from '@/lib/supabase/types'
 
@@ -171,18 +172,8 @@ async function performSync(
 
     console.log('[Vercel Sync] Completed successfully:', stats)
 
-    // Trigger documentation generation in background
-    runServiceDocGeneration(projectId, 'vercel', supabase)
-      .then((result) => {
-        if (result.errors.length > 0) {
-          console.log('[ServiceDocGen] Completed with errors:', result.errors)
-        } else {
-          console.log('[ServiceDocGen] Successfully generated service documentation')
-        }
-      })
-      .catch((error) => {
-        console.error('[ServiceDocGen] Failed:', error)
-      })
+    // Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+    // Users can create documentation using the /documents/new wizard
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'

@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ServiceConnectionCard } from '@/components/services/service-connection-card'
 import { ServiceAssetsList } from '@/components/services/service-assets-list'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Database, Cloud } from 'lucide-react'
+import { Database, Cloud, FileJson } from 'lucide-react'
 
 export default async function ServicesPage({
   params,
@@ -74,6 +74,7 @@ export default async function ServicesPage({
 
   const supabaseConnection = connections?.find((c) => c.service === 'supabase')
   const vercelConnection = connections?.find((c) => c.service === 'vercel')
+  const openApiConnections = connections?.filter((c) => c.service === 'openapi') || []
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -106,9 +107,35 @@ export default async function ServicesPage({
           assetCounts={vercelConnection ? connectionAssets[vercelConnection.id] : undefined}
           isAdmin={isAdmin}
         />
+
+        {/* OpenAPI - show existing connections */}
+        {openApiConnections.map((connection) => (
+          <ServiceConnectionCard
+            key={connection.id}
+            projectId={params.id}
+            service="openapi"
+            title={connection.display_name}
+            description="OpenAPI/Swagger specification with endpoints, schemas, and authentication details."
+            icon={<FileJson className="h-6 w-6" />}
+            connection={connection}
+            assetCounts={connectionAssets[connection.id]}
+            isAdmin={isAdmin}
+          />
+        ))}
+
+        {/* OpenAPI - add new */}
+        <ServiceConnectionCard
+          projectId={params.id}
+          service="openapi"
+          title="OpenAPI / Swagger"
+          description="Connect an OpenAPI or Swagger spec URL to sync API endpoints, schemas, and authentication details."
+          icon={<FileJson className="h-6 w-6" />}
+          connection={undefined}
+          isAdmin={isAdmin}
+        />
       </div>
 
-      {(supabaseConnection || vercelConnection) && (
+      {(supabaseConnection || vercelConnection || openApiConnections.length > 0) && (
         <Card>
           <CardHeader>
             <CardTitle>Service Inventory</CardTitle>
@@ -117,7 +144,7 @@ export default async function ServicesPage({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue={supabaseConnection ? 'supabase' : 'vercel'}>
+            <Tabs defaultValue={supabaseConnection ? 'supabase' : vercelConnection ? 'vercel' : openApiConnections[0]?.id}>
               <TabsList>
                 {supabaseConnection && (
                   <TabsTrigger value="supabase" className="flex items-center gap-2">
@@ -131,6 +158,12 @@ export default async function ServicesPage({
                     Vercel
                   </TabsTrigger>
                 )}
+                {openApiConnections.map((connection) => (
+                  <TabsTrigger key={connection.id} value={connection.id} className="flex items-center gap-2">
+                    <FileJson className="h-4 w-4" />
+                    {connection.display_name}
+                  </TabsTrigger>
+                ))}
               </TabsList>
 
               {supabaseConnection && (
@@ -152,6 +185,16 @@ export default async function ServicesPage({
                   />
                 </TabsContent>
               )}
+
+              {openApiConnections.map((connection) => (
+                <TabsContent key={connection.id} value={connection.id}>
+                  <ServiceAssetsList
+                    projectId={params.id}
+                    service="openapi"
+                    connectionId={connection.id}
+                  />
+                </TabsContent>
+              ))}
             </Tabs>
           </CardContent>
         </Card>

@@ -1,0 +1,220 @@
+/**
+ * Sync OpenAPI service
+ * POST /api/projects/[id]/services/openapi/sync
+ */
+
+import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
+import { createOpenApiAdapter } from '@/lib/services'
+import { decrypt } from '@/lib/encryption'
+// Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+// import { runServiceDocGeneration } from '@/lib/service-doc-generator'
+import { NextResponse } from 'next/server'
+import type { OpenApiConfig, OpenApiSecrets, OpenApiSyncStats } from '@/lib/supabase/types'
+
+export async function POST(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const supabase = createServerSupabaseClient()
+  const serviceClient = createServiceRoleClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Verify project admin access (OWNER or MAINTAINER)
+  const { data: membership } = await supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', params.id)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!membership || !['OWNER', 'MAINTAINER'].includes(membership.role)) {
+    return NextResponse.json(
+      { error: 'Only project owners and maintainers can trigger syncs' },
+      { status: 403 }
+    )
+  }
+
+  // Find the OpenAPI connection
+  const { data: connection } = await supabase
+    .from('project_service_connections')
+    .select('id, config_json, secret_encrypted')
+    .eq('project_id', params.id)
+    .eq('service', 'openapi')
+    .single()
+
+  if (!connection) {
+    return NextResponse.json(
+      { error: 'No OpenAPI connection found for this project' },
+      { status: 404 }
+    )
+  }
+
+  // Create a sync run record
+  const { data: syncRun, error: syncRunError } = await serviceClient
+    .from('service_sync_runs')
+    .insert({
+      project_id: params.id,
+      connection_id: connection.id,
+      triggered_by: user.id,
+      status: 'RUNNING',
+    })
+    .select()
+    .single()
+
+  if (syncRunError) {
+    console.error('[OpenAPI Sync] Error creating sync run:', syncRunError)
+    return NextResponse.json(
+      { error: 'Failed to start sync' },
+      { status: 500 }
+    )
+  }
+
+  // Start sync in background
+  performSync(
+    params.id,
+    connection.id,
+    syncRun.id,
+    connection.config_json as OpenApiConfig,
+    connection.secret_encrypted,
+    serviceClient
+  ).catch((error) => {
+    console.error('[OpenAPI Sync] Background sync error:', error)
+  })
+
+  return NextResponse.json({
+    sync_run_id: syncRun.id,
+    status: 'RUNNING',
+    message: 'Sync started',
+  })
+}
+
+/**
+ * Perform the actual sync in the background
+ */
+async function performSync(
+  projectId: string,
+  connectionId: string,
+  syncRunId: string,
+  config: OpenApiConfig,
+  encryptedSecrets: string,
+  supabase: ReturnType<typeof createServiceRoleClient>
+) {
+  let stats: OpenApiSyncStats | null = null
+
+  try {
+    // Decrypt secrets
+    const decryptedSecrets = await decrypt(encryptedSecrets)
+    const secrets: OpenApiSecrets = JSON.parse(decryptedSecrets)
+
+    // Run sync using adapter
+    const adapter = createOpenApiAdapter()
+    const result = await adapter.sync(config, secrets)
+
+    if (!result.success) {
+      throw new Error(result.error || 'Sync failed')
+    }
+
+    stats = result.stats as OpenApiSyncStats
+    const warnings = result.warnings || []
+
+    // Delete existing assets for this connection
+    await supabase
+      .from('service_assets')
+      .delete()
+      .eq('connection_id', connectionId)
+
+    // Insert new assets
+    if (result.assets.length > 0) {
+      const assetsToInsert = result.assets.map((asset) => ({
+        project_id: projectId,
+        connection_id: connectionId,
+        service: 'openapi' as const,
+        asset_type: asset.asset_type,
+        asset_key: asset.asset_key,
+        name: asset.name,
+        data_json: asset.data_json,
+        updated_at: new Date().toISOString(),
+      }))
+
+      // Insert in batches of 100
+      const batchSize = 100
+      for (let i = 0; i < assetsToInsert.length; i += batchSize) {
+        const batch = assetsToInsert.slice(i, i + batchSize)
+        await supabase.from('service_assets').insert(batch)
+      }
+    }
+
+    // Update config with latest spec info
+    await supabase
+      .from('project_service_connections')
+      .update({
+        config_json: {
+          ...config,
+          spec_fingerprint: stats.spec_fingerprint,
+          spec_version: stats.spec_version,
+          spec_title: stats.spec_title,
+        },
+      })
+      .eq('id', connectionId)
+
+    // Update connection status (set warning if we have warnings but it succeeded)
+    const connectionStatus = warnings.length > 0 ? 'WARNING' : 'CONNECTED'
+    await supabase
+      .from('project_service_connections')
+      .update({
+        status: connectionStatus,
+        last_synced_at: new Date().toISOString(),
+        last_sync_error: warnings.length > 0 ? warnings.join('\n') : null,
+      })
+      .eq('id', connectionId)
+
+    // Update sync run status
+    await supabase
+      .from('service_sync_runs')
+      .update({
+        status: warnings.length > 0 ? 'WARNING' : 'SUCCESS',
+        finished_at: new Date().toISOString(),
+        stats_json: { ...stats, warnings },
+      })
+      .eq('id', syncRunId)
+
+    console.log('[OpenAPI Sync] Completed successfully:', stats)
+    if (warnings.length > 0) {
+      console.log('[OpenAPI Sync] Warnings:', warnings)
+    }
+
+    // Legacy auto-doc generation disabled - documents are now user-created via Document Builder
+    // Users can create documentation using the /documents/new wizard
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('[OpenAPI Sync] Error:', errorMessage)
+
+    // Update connection status
+    await supabase
+      .from('project_service_connections')
+      .update({
+        status: 'ERROR',
+        last_sync_error: errorMessage,
+      })
+      .eq('id', connectionId)
+
+    // Update sync run status
+    await supabase
+      .from('service_sync_runs')
+      .update({
+        status: 'ERROR',
+        finished_at: new Date().toISOString(),
+        error: errorMessage,
+        stats_json: stats || {},
+      })
+      .eq('id', syncRunId)
+  }
+}

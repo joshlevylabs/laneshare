@@ -63,7 +63,7 @@ export async function POST(
       .select(
         `
         *,
-        repo:repos(id, owner, name, github_installation_token)
+        repo:repos(id, owner, name, github_token_encrypted)
       `
       )
       .eq('id', sessionId)
@@ -90,10 +90,10 @@ export async function POST(
       id: string
       owner: string
       name: string
-      github_installation_token: string
+      github_token_encrypted: string | null
     }
 
-    if (!repo.github_installation_token) {
+    if (!repo.github_token_encrypted) {
       return NextResponse.json(
         { error: 'Repository does not have a valid GitHub token' },
         { status: 400 }
@@ -101,7 +101,7 @@ export async function POST(
     }
 
     // Initialize GitHub editor
-    const github = await GitHubCodeEditor.fromEncryptedToken(repo.github_installation_token)
+    const github = await GitHubCodeEditor.fromEncryptedToken(repo.github_token_encrypted)
 
     // Try to delete the implementation branch
     let branchDeleted = false
@@ -198,9 +198,10 @@ export async function POST(
     if (task) {
       await supabase.from('task_activity').insert({
         task_id: task.task_id,
-        user_id: user.id,
+        actor_id: user.id,
+        project_id: projectId,
         kind: 'AGENT_IMPLEMENTATION_FAILED',
-        payload: {
+        after_value: {
           session_id: sessionId,
           reason: 'rollback',
           message: body.reason,

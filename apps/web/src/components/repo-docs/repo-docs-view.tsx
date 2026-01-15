@@ -50,13 +50,18 @@ interface PageSummary {
 }
 
 interface DocGenProgress {
-  stage: 'starting' | 'calling_api' | 'parsing' | 'continuation' | 'complete' | 'error'
+  stage: 'starting' | 'calling_api' | 'streaming' | 'parsing' | 'continuation' | 'complete' | 'error'
   message: string
   pagesGenerated: number
   round: number
   maxRounds: number
   continuationAttempt?: number
   lastUpdated?: string
+  // Time estimation
+  estimatedTotalSeconds?: number
+  elapsedSeconds?: number
+  // Streaming progress
+  streamingPages?: string[]
 }
 
 const categoryIcons: Record<RepoDocCategory, React.ReactNode> = {
@@ -88,13 +93,31 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
     return now - lastUpdate > 2 * 60 * 1000 // 2 minutes
   }
 
+  // Format seconds as "Xm Ys" or "Xs"
+  const formatTime = (seconds: number): string => {
+    if (seconds < 60) return `${seconds}s`
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
+  }
+
+  // Get time remaining string
+  const getTimeRemaining = (progress: DocGenProgress | null): string | null => {
+    if (!progress?.estimatedTotalSeconds || !progress?.elapsedSeconds) return null
+    const remaining = Math.max(0, progress.estimatedTotalSeconds - progress.elapsedSeconds)
+    if (remaining === 0) return 'Almost done...'
+    return `~${formatTime(remaining)} remaining`
+  }
+
   const getDocStageLabel = (progress: DocGenProgress | null): string => {
     if (!progress) return 'Generating documentation...'
     switch (progress.stage) {
       case 'starting':
         return 'Initializing...'
       case 'calling_api':
-        return `Round ${progress.round}/${progress.maxRounds}: Analyzing repository...`
+        return `Round ${progress.round}/${progress.maxRounds}: Connecting to Claude...`
+      case 'streaming':
+        return `Round ${progress.round}/${progress.maxRounds}: Generating pages...`
       case 'parsing':
         return `Round ${progress.round}/${progress.maxRounds}: Processing response...`
       case 'continuation':
@@ -557,6 +580,12 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
                   {getDocStageLabel(docGenProgress)}
                 </span>
                 <div className="flex items-center gap-2">
+                  {/* Time remaining estimate */}
+                  {getTimeRemaining(docGenProgress) && (
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {getTimeRemaining(docGenProgress)}
+                    </span>
+                  )}
                   {docGenProgress?.pagesGenerated !== undefined && docGenProgress.pagesGenerated > 0 && (
                     <Badge variant="secondary" className="text-xs">
                       {docGenProgress.pagesGenerated} pages
@@ -593,21 +622,39 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
                   </Button>
                 </div>
               )}
-              {docGenProgress?.message && !isProgressStale(docGenProgress) && (
+              {/* Show streaming page titles if available */}
+              {docGenProgress?.streamingPages && docGenProgress.streamingPages.length > 0 && !isProgressStale(docGenProgress) && (
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  <span className="font-medium">Generating: </span>
+                  <span className="text-purple-600 dark:text-purple-400">
+                    {docGenProgress.streamingPages[docGenProgress.streamingPages.length - 1]}
+                  </span>
+                </div>
+              )}
+              {docGenProgress?.message && !docGenProgress?.streamingPages?.length && !isProgressStale(docGenProgress) && (
                 <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                   {docGenProgress.message}
                 </p>
               )}
-              {/* Progress indicator - indeterminate animated bar */}
+              {/* Progress indicator - shows actual progress when estimated time is available */}
               <div className="flex items-center gap-3">
                 <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-purple-500 rounded-full animate-progress-indeterminate"
-                    style={{ width: '30%' }}
-                  />
+                  {docGenProgress?.estimatedTotalSeconds && docGenProgress?.elapsedSeconds ? (
+                    <div
+                      className="h-full bg-purple-500 rounded-full transition-all duration-500 ease-out"
+                      style={{
+                        width: `${Math.min(95, (docGenProgress.elapsedSeconds / docGenProgress.estimatedTotalSeconds) * 100)}%`
+                      }}
+                    />
+                  ) : (
+                    <div
+                      className="h-full bg-purple-500 rounded-full animate-progress-indeterminate"
+                      style={{ width: '30%' }}
+                    />
+                  )}
                 </div>
                 <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap font-medium">
-                  Round {docGenProgress?.round || 1}/{docGenProgress?.maxRounds || 3}
+                  Round {docGenProgress?.round || 1}/{docGenProgress?.maxRounds || 2}
                 </span>
               </div>
             </div>
@@ -749,6 +796,8 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
           <DocPageViewer
             projectId={projectId}
             repoId={repoId}
+            repoOwner={repo.owner}
+            repoName={repo.name}
             pageId={selectedPageId}
             onUpdate={fetchPages}
           />

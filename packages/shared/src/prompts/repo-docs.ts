@@ -360,63 +360,124 @@ export const KEY_FILE_PATTERNS = {
 
 /**
  * Get priority score for a file path (higher = more important)
+ *
+ * CRITICAL: Source files (components, pages, API routes) must have HIGH priority
+ * because they reveal actual features. Config files are useful but secondary.
  */
 export function getFilePriority(path: string): number {
   const lowerPath = path.toLowerCase()
+  const filename = path.split('/').pop()?.toLowerCase() || ''
 
-  // Highest priority: README and main config
-  if (lowerPath === 'readme.md' || lowerPath === 'package.json') {
-    return 100
+  // Lowest priority: tests (we want features, not tests)
+  if (lowerPath.includes('test') || lowerPath.includes('spec') || lowerPath.includes('__tests__')) {
+    return 5
   }
 
-  // High priority: Prisma schema (critical for data model documentation)
-  if (lowerPath.endsWith('schema.prisma') || lowerPath.endsWith('prisma/schema.prisma')) {
+  // Skip type definition files
+  if (filename.endsWith('.d.ts')) {
+    return 5
+  }
+
+  // ===========================================
+  // HIGHEST PRIORITY: Feature-revealing files
+  // ===========================================
+
+  // Top priority: UI Components - these directly reveal features
+  if (lowerPath.includes('/components/') && (filename.endsWith('.tsx') || filename.endsWith('.jsx'))) {
+    // Boost "main" components higher (not small utilities)
+    if (filename.includes('view') || filename.includes('list') || filename.includes('form') ||
+        filename.includes('modal') || filename.includes('dialog') || filename.includes('page')) {
+      return 100
+    }
     return 95
   }
 
-  // High priority: Database migrations (newest first for schema understanding)
-  if ((lowerPath.includes('migrations/') || lowerPath.includes('supabase/')) && lowerPath.endsWith('.sql')) {
+  // Top priority: Page/Route components - reveal app structure
+  if ((lowerPath.includes('/app/') || lowerPath.includes('/pages/')) &&
+      (filename === 'page.tsx' || filename === 'page.jsx' || filename.endsWith('.tsx'))) {
+    return 98
+  }
+
+  // Top priority: API routes - reveal backend functionality
+  if (lowerPath.includes('/api/') && filename === 'route.ts') {
+    return 96
+  }
+
+  // High priority: Hooks and contexts - reveal state/logic
+  if (lowerPath.includes('/hooks/') || lowerPath.includes('/context/') ||
+      filename.startsWith('use') || filename.includes('context')) {
+    return 90
+  }
+
+  // High priority: Services and utilities that implement features
+  if (lowerPath.includes('/services/') || lowerPath.includes('/lib/')) {
+    // Skip generic utils, prioritize feature-specific services
+    if (filename.includes('util') || filename.includes('helper')) {
+      return 60
+    }
     return 85
   }
 
-  // High priority: entry points
-  if (KEY_FILE_PATTERNS.entrypoints.some(p => lowerPath.endsWith(p.toLowerCase()))) {
-    return 80
+  // ===========================================
+  // HIGH PRIORITY: Schema and data model files
+  // ===========================================
+
+  // Database schema - critical for understanding data model
+  if (lowerPath.endsWith('schema.prisma') || lowerPath.includes('prisma/schema')) {
+    return 92
   }
 
-  // High priority: config files
-  if (KEY_FILE_PATTERNS.config.some(p => lowerPath.endsWith(p.toLowerCase()))) {
+  // Supabase migrations - show database structure
+  if (lowerPath.includes('migrations/') && lowerPath.endsWith('.sql')) {
+    return 88
+  }
+
+  // Type definitions that reveal data structures
+  if (lowerPath.includes('/types/') && filename.endsWith('.ts')) {
+    return 82
+  }
+
+  // ===========================================
+  // MEDIUM PRIORITY: Config and setup files
+  // ===========================================
+
+  // Package.json - tech stack info
+  if (lowerPath === 'package.json') {
+    return 75
+  }
+
+  // README - project overview
+  if (lowerPath === 'readme.md') {
     return 70
   }
 
-  // Medium priority: documentation
-  if (KEY_FILE_PATTERNS.docs.some(p => lowerPath.includes(p.toLowerCase()))) {
-    return 60
+  // Entry points
+  if (KEY_FILE_PATTERNS.entrypoints.some(p => lowerPath.endsWith(p.toLowerCase()))) {
+    return 65
   }
 
-  // Medium priority: infrastructure
+  // Config files (tsconfig, next.config, etc.)
+  if (KEY_FILE_PATTERNS.config.some(p => lowerPath.endsWith(p.toLowerCase()))) {
+    return 55
+  }
+
+  // Infrastructure files
   if (KEY_FILE_PATTERNS.infra.some(p => lowerPath.includes(p.toLowerCase()))) {
     return 50
   }
 
-  // Medium priority: database config (drizzle, etc.)
-  if (KEY_FILE_PATTERNS.database.some(p => lowerPath.includes(p.toLowerCase()))) {
-    return 50
+  // Other documentation
+  if (KEY_FILE_PATTERNS.docs.some(p => lowerPath.includes(p.toLowerCase()))) {
+    return 45
   }
 
-  // Lower priority: API routes and handlers
-  if (lowerPath.includes('/api/') || lowerPath.includes('/routes/') || lowerPath.includes('/controllers/')) {
-    return 40
-  }
+  // ===========================================
+  // LOWER PRIORITY: General source files
+  // ===========================================
 
-  // Lower priority: source files
+  // Generic source files in src/app/lib
   if (lowerPath.includes('/src/') || lowerPath.includes('/lib/') || lowerPath.includes('/app/')) {
-    return 30
-  }
-
-  // Lowest priority: tests
-  if (lowerPath.includes('test') || lowerPath.includes('spec') || lowerPath.includes('__tests__')) {
-    return 10
+    return 40
   }
 
   // Default

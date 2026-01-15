@@ -75,7 +75,7 @@ export async function POST(
 
   const { markdown } = result.data
   const title = result.data.title || session.title || 'Untitled Document'
-  const category = result.data.category || session.category || 'other'
+  const category = (result.data.category || session.category || 'other') as DocumentCategory
   const description = result.data.description ?? session.description
   const tags = result.data.tags ?? session.tags ?? []
 
@@ -151,7 +151,7 @@ export async function POST(
   }> = []
 
   // Link to selected tasks
-  if (session.selected_task_ids?.length > 0) {
+  if (session.selected_task_ids && session.selected_task_ids.length > 0) {
     for (const taskId of session.selected_task_ids) {
       referencesToCreate.push({
         project_id: params.id,
@@ -165,7 +165,7 @@ export async function POST(
   }
 
   // Link to selected systems
-  if (session.selected_system_ids?.length > 0) {
+  if (session.selected_system_ids && session.selected_system_ids.length > 0) {
     for (const systemId of session.selected_system_ids) {
       referencesToCreate.push({
         project_id: params.id,
@@ -179,7 +179,7 @@ export async function POST(
   }
 
   // Link to selected docs (related documents)
-  if (session.selected_doc_ids?.length > 0) {
+  if (session.selected_doc_ids && session.selected_doc_ids.length > 0) {
     for (const docId of session.selected_doc_ids) {
       if (docId !== document.id) {
         referencesToCreate.push({

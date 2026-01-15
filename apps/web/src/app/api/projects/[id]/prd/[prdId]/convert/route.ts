@@ -2,6 +2,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { PRD_CONVERT_SYSTEM_PROMPT, PRDJson } from '@laneshare/shared'
+import type { Json } from '@/lib/supabase/types'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -52,7 +53,7 @@ export async function POST(
   // Get project info
   const { data: project } = await supabase
     .from('projects')
-    .select('name, slug')
+    .select('name')
     .eq('id', params.id)
     .single()
 
@@ -70,7 +71,7 @@ export async function POST(
 
   const contextInfo = `
 PROJECT NAME: ${project?.name || 'Unknown'}
-PROJECT SLUG: ${project?.slug || 'unknown'}
+PROJECT ID: ${params.id}
 
 AVAILABLE REPOS (for linking):
 ${(repos || []).map(r => `- ${r.id}: ${r.owner}/${r.name}`).join('\n') || 'None'}
@@ -123,9 +124,9 @@ ${prd.raw_markdown}
     const { data: updatedPrd, error: updateError } = await supabase
       .from('project_prds')
       .update({
-        prd_json: prdJson,
+        prd_json: prdJson as unknown as Json,
         status: 'READY',
-        version: prdJson.metadata.version,
+        version: prdJson.metadata?.version ?? 1,
       })
       .eq('id', params.prdId)
       .select()

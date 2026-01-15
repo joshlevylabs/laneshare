@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { Json } from '@/lib/supabase/types'
 import {
   buildTaskAgentPrompt,
   buildFollowUpPrompt,
@@ -474,7 +475,7 @@ export async function POST(
       turn_number: nextTurnNumber,
       status: 'PENDING_RESPONSE',
       prompt_content: promptResult.prompt,
-      prompt_metadata: promptResult.metadata,
+      prompt_metadata: promptResult.metadata as unknown as Json,
     })
     .select()
     .single()

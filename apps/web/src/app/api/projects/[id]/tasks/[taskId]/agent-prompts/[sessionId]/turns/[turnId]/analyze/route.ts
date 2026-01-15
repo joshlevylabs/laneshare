@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { Json } from '@/lib/supabase/types'
 import {
   RESPONSE_ANALYSIS_SYSTEM_PROMPT,
   buildResponseAnalysisPrompt,
@@ -209,7 +210,7 @@ export async function POST(
     .from('agent_prompt_turns')
     .update({
       status: turnStatus,
-      analysis_result: analysisResult,
+      analysis_result: analysisResult as unknown as Json,
       suggested_status_update: suggestedStatus,
       completed_at: new Date().toISOString(),
     })

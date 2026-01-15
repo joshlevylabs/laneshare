@@ -118,7 +118,7 @@ export async function POST(
       project_id: params.id,
       created_by: user.id,
       title: result.data.title,
-      category: result.data.category,
+      category: result.data.category as DocumentCategory | undefined,
       description: result.data.description,
       status: 'BASICS',
     })

@@ -9,7 +9,8 @@ import { decrypt } from '@/lib/encryption'
 // Legacy auto-doc generation disabled - documents are now user-created via Document Builder
 // import { runServiceDocGeneration } from '@/lib/service-doc-generator'
 import { NextResponse } from 'next/server'
-import type { VercelConfig, VercelSecrets, VercelSyncStats } from '@/lib/supabase/types'
+import type { VercelConfig, VercelSecrets, VercelSyncStats } from '@/lib/supabase/supabase-service-types'
+import type { Json } from '@/lib/supabase/types'
 
 export async function POST(
   request: Request,
@@ -81,7 +82,7 @@ export async function POST(
     params.id,
     connection.id,
     syncRun.id,
-    connection.config_json as VercelConfig,
+    connection.config_json as unknown as VercelConfig,
     connection.secret_encrypted,
     serviceClient
   ).catch((error) => {
@@ -138,7 +139,7 @@ async function performSync(
         asset_type: asset.asset_type,
         asset_key: asset.asset_key,
         name: asset.name,
-        data_json: asset.data_json,
+        data_json: asset.data_json as unknown as Json,
         updated_at: new Date().toISOString(),
       }))
 
@@ -154,7 +155,7 @@ async function performSync(
     await supabase
       .from('project_service_connections')
       .update({
-        status: 'CONNECTED',
+        status: 'CONNECTED' as const,
         last_synced_at: new Date().toISOString(),
         last_sync_error: null,
       })
@@ -164,9 +165,9 @@ async function performSync(
     await supabase
       .from('service_sync_runs')
       .update({
-        status: 'SUCCESS',
+        status: 'SUCCESS' as const,
         finished_at: new Date().toISOString(),
-        stats_json: stats,
+        stats_json: stats as unknown as Json,
       })
       .eq('id', syncRunId)
 

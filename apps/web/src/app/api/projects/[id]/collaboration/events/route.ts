@@ -6,7 +6,7 @@
  */
 
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import type { CollaborationEvent, CollaborationEventType } from '@laneshare/shared/types/collaborative-editing'
+import type { CollaborationEvent, CollaborationEventType } from '@laneshare/shared'
 
 export const dynamic = 'force-dynamic'
 
@@ -85,26 +85,26 @@ export async function GET(
             for (const edit of newEdits) {
               const event: CollaborationEvent = {
                 type: 'edit_received',
-                timestamp: edit.created_at,
+                timestamp: edit.created_at || new Date().toISOString(),
                 sessionId: sessionId || 'all',
                 data: {
                   edit: {
                     id: edit.id,
                     virtualBranchId: edit.virtual_branch_id,
                     projectId: edit.project_id,
-                    operation: edit.operation,
+                    operation: edit.operation as 'create' | 'edit' | 'delete' | 'rename',
                     filePath: edit.file_path,
-                    linesAdded: edit.lines_added,
-                    linesRemoved: edit.lines_removed,
-                    sequenceNum: edit.sequence_num,
-                    createdAt: edit.created_at,
+                    linesAdded: edit.lines_added ?? 0,
+                    linesRemoved: edit.lines_removed ?? 0,
+                    sequenceNum: edit.sequence_num ?? 0,
+                    createdAt: edit.created_at || new Date().toISOString(),
                   },
                   branchId: edit.virtual_branch_id,
                 },
               }
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
             }
-            lastCheckTime = newEdits[newEdits.length - 1].created_at
+            lastCheckTime = newEdits[newEdits.length - 1].created_at || lastCheckTime
           }
 
           // Check for conflicts
@@ -145,11 +145,13 @@ export async function GET(
 
               const event: CollaborationEvent = {
                 type: eventType,
-                timestamp: merge.completed_at || merge.started_at,
+                timestamp: merge.completed_at || merge.started_at || new Date().toISOString(),
                 sessionId: sessionId || 'all',
                 data: {
                   mergeEventId: merge.id,
-                  filesAffected: merge.files_merged?.map((f: { path: string }) => f.path) || [],
+                  filesAffected: Array.isArray(merge.files_merged)
+                    ? merge.files_merged.map((f: unknown) => (f as { path: string }).path)
+                    : [],
                 },
               }
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))

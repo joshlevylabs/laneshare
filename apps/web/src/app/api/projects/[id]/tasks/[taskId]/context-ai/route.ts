@@ -2,6 +2,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import OpenAI from 'openai'
+import type { Json } from '@/lib/supabase/types'
 import {
   CONTEXT_AI_SYSTEM_PROMPT,
   buildContextDiscoveryPrompt,
@@ -383,7 +384,7 @@ export async function POST(
       project_id: params.id,
       sender: 'AI',
       content: aiResponse,
-      suggestions: suggestions.length > 0 ? suggestions : null,
+      suggestions: suggestions.length > 0 ? suggestions as unknown as Json : null,
     })
     .select()
     .single()

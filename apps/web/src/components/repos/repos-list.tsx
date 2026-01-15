@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { formatRelativeTime } from '@laneshare/shared'
 import { Progress } from '@/components/ui/progress'
-import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink, Bell, BellOff, FileText, Sparkles, CheckCircle, AlertCircle, X, AlertTriangle } from 'lucide-react'
+import { GitBranch, RefreshCw, Trash2, Loader2, ExternalLink, Bell, BellOff, FileText, Sparkles, CheckCircle, AlertCircle, X, AlertTriangle, Cloud } from 'lucide-react'
+import { CodespacesTokenDialog } from './codespaces-token-dialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -42,6 +43,7 @@ interface Repo {
   latest_commit_sha: string | null
   doc_status: 'PENDING' | 'GENERATING' | 'READY' | 'NEEDS_REVIEW' | 'ERROR' | null
   doc_bundle_id: string | null
+  has_codespaces_token: boolean
 }
 
 interface ReposListProps {
@@ -75,6 +77,7 @@ export function ReposList({ repos, projectId }: ReposListProps) {
   const [cancellingDocs, setCancellingDocs] = useState<Set<string>>(new Set())
   const [repoProgress, setRepoProgress] = useState<Record<string, SyncProgress>>({})
   const [docGenProgress, setDocGenProgress] = useState<Record<string, DocGenProgress>>({})
+  const [codespacesDialogRepo, setCodespacesDialogRepo] = useState<Repo | null>(null)
 
   // Check if progress is stale (no update for more than 2 minutes)
   const isProgressStale = (progress: DocGenProgress | undefined): boolean => {
@@ -762,6 +765,17 @@ export function ReposList({ repos, projectId }: ReposListProps) {
                     </>
                   )}
 
+                  {/* Codespaces token button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCodespacesDialogRepo(repo)}
+                    title={repo.has_codespaces_token ? 'Codespaces enabled' : 'Configure Codespaces'}
+                    className={repo.has_codespaces_token ? 'border-green-500/50' : ''}
+                  >
+                    <Cloud className={`h-4 w-4 ${repo.has_codespaces_token ? 'text-green-500' : ''}`} />
+                  </Button>
+
                   <Button
                     variant="outline"
                     size="sm"
@@ -808,6 +822,21 @@ export function ReposList({ repos, projectId }: ReposListProps) {
           </Card>
         )
       })}
+
+      {/* Codespaces Token Dialog */}
+      {codespacesDialogRepo && (
+        <CodespacesTokenDialog
+          open={!!codespacesDialogRepo}
+          onOpenChange={(open) => !open && setCodespacesDialogRepo(null)}
+          repoId={codespacesDialogRepo.id}
+          repoName={`${codespacesDialogRepo.owner}/${codespacesDialogRepo.name}`}
+          hasToken={codespacesDialogRepo.has_codespaces_token}
+          onTokenUpdated={() => {
+            setCodespacesDialogRepo(null)
+            router.refresh()
+          }}
+        />
+      )}
     </div>
   )
 }

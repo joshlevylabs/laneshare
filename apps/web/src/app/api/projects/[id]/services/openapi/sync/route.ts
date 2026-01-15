@@ -9,7 +9,8 @@ import { decrypt } from '@/lib/encryption'
 // Legacy auto-doc generation disabled - documents are now user-created via Document Builder
 // import { runServiceDocGeneration } from '@/lib/service-doc-generator'
 import { NextResponse } from 'next/server'
-import type { OpenApiConfig, OpenApiSecrets, OpenApiSyncStats } from '@/lib/supabase/types'
+import type { OpenApiConfig, OpenApiSecrets, OpenApiSyncStats } from '@/lib/supabase/openapi-types'
+import type { Json } from '@/lib/supabase/types'
 
 export async function POST(
   request: Request,
@@ -81,7 +82,7 @@ export async function POST(
     params.id,
     connection.id,
     syncRun.id,
-    connection.config_json as OpenApiConfig,
+    connection.config_json as unknown as OpenApiConfig,
     connection.secret_encrypted,
     serviceClient
   ).catch((error) => {
@@ -139,7 +140,7 @@ async function performSync(
         asset_type: asset.asset_type,
         asset_key: asset.asset_key,
         name: asset.name,
-        data_json: asset.data_json,
+        data_json: asset.data_json as unknown as Json,
         updated_at: new Date().toISOString(),
       }))
 
@@ -164,22 +165,21 @@ async function performSync(
       })
       .eq('id', connectionId)
 
-    // Update connection status (set warning if we have warnings but it succeeded)
-    const connectionStatus = warnings.length > 0 ? 'WARNING' : 'CONNECTED'
+    // Update connection status (warnings still mean successful sync, just with notes)
     await supabase
       .from('project_service_connections')
       .update({
-        status: connectionStatus,
+        status: 'CONNECTED' as const,
         last_synced_at: new Date().toISOString(),
         last_sync_error: warnings.length > 0 ? warnings.join('\n') : null,
       })
       .eq('id', connectionId)
 
-    // Update sync run status
+    // Update sync run status (SUCCESS even with warnings - they are stored in stats_json)
     await supabase
       .from('service_sync_runs')
       .update({
-        status: warnings.length > 0 ? 'WARNING' : 'SUCCESS',
+        status: 'SUCCESS' as const,
         finished_at: new Date().toISOString(),
         stats_json: { ...stats, warnings },
       })

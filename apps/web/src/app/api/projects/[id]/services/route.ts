@@ -5,6 +5,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import type { Json } from '@/lib/supabase/types'
 
 export async function GET(
   request: Request,
@@ -58,10 +59,10 @@ export async function GET(
   let syncRuns: Array<{
     id: string
     connection_id: string
-    status: string
-    started_at: string
+    status: string | null
+    started_at: string | null
     finished_at: string | null
-    stats_json: Record<string, unknown>
+    stats_json: Json | null
     error: string | null
   }> = []
 

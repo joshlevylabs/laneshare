@@ -65,7 +65,8 @@ export async function GET(
     ?.sort((a: { version: number }, b: { version: number }) => b.version - a.version)[0]
 
   // Count nodes
-  const nodeCount = latestSnapshot?.graph_json?.nodes?.length || 0
+  const graphJson = latestSnapshot?.graph_json as { nodes?: unknown[] } | undefined
+  const nodeCount = graphJson?.nodes?.length || 0
 
   return NextResponse.json({
     ...system,
@@ -144,7 +145,7 @@ export async function PATCH(
       .from('systems')
       .select('id')
       .eq('project_id', params.id)
-      .eq('slug', updateData.slug)
+      .eq('slug', updateData.slug as string)
       .neq('id', params.systemId)
       .single()
 

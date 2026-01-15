@@ -11,7 +11,7 @@ import type {
   DeploymentAssetData,
   DomainAssetData,
   EnvVarAssetData,
-} from '@/lib/supabase/types'
+} from '@/lib/supabase/supabase-service-types'
 import type { ServiceAdapter, ValidationResult, SyncResult, DiscoveredAsset } from './types'
 
 const VERCEL_API_BASE = 'https://api.vercel.com'

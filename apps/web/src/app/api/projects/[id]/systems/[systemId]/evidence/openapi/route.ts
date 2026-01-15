@@ -7,7 +7,7 @@
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import type { OpenApiEndpointAssetData } from '@/lib/supabase/types'
+import type { OpenApiEndpointAssetData } from '@/lib/supabase/openapi-types'
 
 const addEvidenceSchema = z.object({
   asset_id: z.string().uuid(),
@@ -65,7 +65,7 @@ export async function GET(
     .from('system_evidence')
     .select('source_ref')
     .eq('system_id', params.systemId)
-    .eq('source_type', 'SERVICE')
+    .eq('source_type', 'SERVICE' as any) // SERVICE not in DB enum yet
 
   const existingRefs = new Set((existingEvidence || []).map((e) => e.source_ref))
 
@@ -86,7 +86,7 @@ export async function GET(
     .eq('project_id', params.id)
     .eq('service', 'openapi')
     .eq('asset_type', 'endpoint')
-    .in('project_service_connections.status', ['CONNECTED', 'WARNING'])
+    .eq('project_service_connections.status', 'CONNECTED')
     .limit(50)
 
   // If auto-matching, search by system keywords
@@ -246,7 +246,7 @@ export async function POST(
     .from('system_evidence')
     .select('id')
     .eq('system_id', params.systemId)
-    .eq('source_type', 'SERVICE')
+    .eq('source_type', 'SERVICE' as any) // SERVICE not in DB enum yet
     .eq('source_ref', asset.asset_key)
     .single()
 
@@ -260,7 +260,7 @@ export async function POST(
     .insert({
       project_id: params.id,
       system_id: params.systemId,
-      source_type: 'SERVICE',
+      source_type: 'SERVICE' as any, // SERVICE not in DB enum yet
       source_ref: asset.asset_key,
       excerpt: customExcerpt || defaultExcerpt,
       confidence,

@@ -54,9 +54,11 @@ export async function POST(
       const queryEmbedding = await embeddingProvider.embed(query)
 
       // Search using vector similarity
+      // Convert embedding array to string format for pgvector
+      const embeddingStr = `[${queryEmbedding.join(',')}]`
       const { data: results, error } = await supabase.rpc('search_chunks', {
         p_project_id: params.id,
-        p_query_embedding: queryEmbedding,
+        p_query_embedding: embeddingStr,
         p_match_count: limit,
         p_match_threshold: 0.5,
       })

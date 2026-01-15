@@ -89,7 +89,7 @@ export async function GET(
     .order('updated_at', { ascending: false })
 
   if (category && DOCUMENT_CATEGORIES.includes(category as DocumentCategory)) {
-    query = query.eq('category', category)
+    query = query.eq('category', category as DocumentCategory)
   }
 
   if (search) {
@@ -187,7 +187,7 @@ export async function POST(
       project_id: params.id,
       title,
       slug: finalSlug,
-      category,
+      category: category as DocumentCategory,
       description,
       tags: tags || [],
       markdown,

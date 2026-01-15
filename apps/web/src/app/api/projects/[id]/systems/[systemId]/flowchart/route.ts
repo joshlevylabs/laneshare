@@ -2,6 +2,7 @@ import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supab
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { SystemGraph, SystemNode, SystemEdge } from '@laneshare/shared'
+import type { Json } from '@/lib/supabase/types'
 
 const nodeSchema = z.object({
   id: z.string(),
@@ -177,7 +178,7 @@ export async function PUT(
         project_id: params.id,
         system_id: params.systemId,
         version: nextVersion,
-        graph_json: graph,
+        graph_json: graph as unknown as Json,
         generated_by: user.id,
         notes: 'Manual save',
       })
@@ -192,8 +193,8 @@ export async function PUT(
       )
     }
 
-    // Update system status to ACTIVE if it has nodes
-    const newStatus = nodes.length > 0 ? 'ACTIVE' : 'DRAFT'
+    // Update system status to GROUNDED if it has nodes
+    const newStatus = nodes.length > 0 ? 'GROUNDED' : 'DRAFT'
     await serviceClient
       .from('systems')
       .update({ status: newStatus })

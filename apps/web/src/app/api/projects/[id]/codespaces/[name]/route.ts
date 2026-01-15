@@ -168,8 +168,8 @@ export async function DELETE(
     .eq('user_id', user.id)
     .single()
 
-  if (!membership || !['admin', 'owner'].includes(membership.role)) {
-    return NextResponse.json({ error: 'Only admins can delete codespaces' }, { status: 403 })
+  if (!membership || !['OWNER', 'MAINTAINER'].includes(membership.role)) {
+    return NextResponse.json({ error: 'Only project owners and maintainers can delete codespaces' }, { status: 403 })
   }
 
   const github = await getGitHubClientForProject(supabase, projectId)

@@ -2,6 +2,7 @@ import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supab
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import type { DocumentCategory, GeneratedPrompt, ContextPackJson, DocumentInterviewAnswers } from '@laneshare/shared'
+import type { Json } from '@/lib/supabase/types'
 
 // System prompt for prompt generation
 const PROMPT_GENERATOR_SYSTEM = `You are LanePilot, an AI assistant that generates coding agent prompts for documentation creation.
@@ -91,7 +92,7 @@ export async function POST(
   }
 
   // Fetch selected repos
-  if (session.selected_repo_ids?.length > 0) {
+  if (session.selected_repo_ids && session.selected_repo_ids.length > 0) {
     const { data: repos } = await supabase
       .from('repos')
       .select('id, name, owner')
@@ -100,7 +101,7 @@ export async function POST(
   }
 
   // Fetch selected services
-  if (session.selected_service_ids?.length > 0) {
+  if (session.selected_service_ids && session.selected_service_ids.length > 0) {
     const { data: services } = await supabase
       .from('project_service_connections')
       .select('id, display_name, service')
@@ -109,37 +110,56 @@ export async function POST(
   }
 
   // Fetch selected systems
-  if (session.selected_system_ids?.length > 0) {
+  if (session.selected_system_ids && session.selected_system_ids.length > 0) {
     const { data: systems } = await supabase
       .from('systems')
       .select('id, name, description')
       .in('id', session.selected_system_ids)
-    contextData.systems = systems || []
+    contextData.systems = (systems || []).map(s => ({
+      id: s.id,
+      name: s.name,
+      description: s.description ?? undefined,
+    }))
   }
 
   // Fetch selected tasks
-  if (session.selected_task_ids?.length > 0) {
+  if (session.selected_task_ids && session.selected_task_ids.length > 0) {
     const { data: tasks } = await supabase
       .from('tasks')
       .select('id, key, title, description')
       .in('id', session.selected_task_ids)
-    contextData.tasks = tasks || []
+    contextData.tasks = (tasks || []).map(t => ({
+      id: t.id,
+      key: t.key,
+      title: t.title,
+      description: t.description ?? undefined,
+    }))
   }
 
   // Fetch selected docs
-  if (session.selected_doc_ids?.length > 0) {
+  if (session.selected_doc_ids && session.selected_doc_ids.length > 0) {
     const { data: docs } = await supabase
       .from('documents')
       .select('id, title, slug, category')
       .in('id', session.selected_doc_ids)
-    contextData.docs = docs || []
+    contextData.docs = (docs || []).map(d => ({
+      id: d.id,
+      title: d.title,
+      slug: d.slug,
+      category: d.category ?? undefined,
+    }))
   }
 
   // Build the context summary for the AI
   const interviewAnswers = (session.interview_answers || {}) as DocumentInterviewAnswers
-  const interviewMessages = session.interview_messages || []
+  const interviewMessages = (session.interview_messages || []) as Array<{ sender: string; content: string }>
 
-  const contextSummary = buildContextSummary(session, contextData, interviewAnswers, interviewMessages)
+  const contextSummary = buildContextSummary({
+    title: session.title ?? undefined,
+    category: session.category ?? undefined,
+    description: session.description ?? undefined,
+    context_keywords: session.context_keywords ?? undefined,
+  }, contextData, interviewAnswers, interviewMessages)
 
   try {
     const anthropic = new Anthropic()
@@ -209,8 +229,8 @@ export async function POST(
       .from('document_builder_sessions')
       .update({
         outline_markdown: parsedResponse.outline,
-        generated_prompts: parsedResponse.prompts,
-        context_pack_json: parsedResponse.contextPack,
+        generated_prompts: parsedResponse.prompts as unknown as Json,
+        context_pack_json: parsedResponse.contextPack as unknown as Json,
         status: 'PROMPTS',
       })
       .eq('id', params.sessionId)

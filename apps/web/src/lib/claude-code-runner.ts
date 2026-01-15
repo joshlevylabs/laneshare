@@ -80,11 +80,17 @@ export interface ClaudeRunnerOptions {
 }
 
 export interface ClaudeRunnerProgress {
-  stage: 'starting' | 'calling_api' | 'parsing' | 'continuation' | 'complete' | 'error'
+  stage: 'starting' | 'calling_api' | 'streaming' | 'parsing' | 'continuation' | 'complete' | 'error'
   message: string
   pagesGenerated?: number
   continuationAttempt?: number
   maxContinuations?: number
+  // Time estimation fields
+  estimatedTotalSeconds?: number
+  elapsedSeconds?: number
+  // Streaming progress
+  tokensGenerated?: number
+  streamingPages?: string[] // Page titles found so far during streaming
 }
 
 export interface ClaudeRunnerResult {
@@ -119,9 +125,11 @@ export class ClaudeRunner implements IClaudeRunner {
       timeout: 5 * 60 * 1000, // 5 minute timeout - increased for larger prompts with verification
     })
     this.model = options.model || 'claude-sonnet-4-20250514'
-    // Reduced to 8000 for faster API response - documentation will be generated in multiple rounds
-    this.maxTokens = options.maxTokens || 8000
-    this.maxContinuations = options.maxContinuations ?? 3
+    // Higher max_tokens = fewer continuation calls = faster total time
+    // 16000 tokens is optimal: enough for most docs in one call, but not so large it's slow
+    this.maxTokens = options.maxTokens || 16000
+    // Reduced continuations since we have higher token limit
+    this.maxContinuations = options.maxContinuations ?? 2
     this.onProgress = options.onProgress
 
     console.log(`[ClaudeRunner] Initialized with model: ${this.model}, maxTokens: ${this.maxTokens}`)
@@ -164,58 +172,102 @@ export class ClaudeRunner implements IClaudeRunner {
 
       // Main loop: initial call + continuations
       while (continuationAttempt <= this.maxContinuations) {
-        await this.reportProgress({
-          stage: continuationAttempt === 0 ? 'calling_api' : 'continuation',
-          message: continuationAttempt === 0
-            ? `Calling Claude API (round ${context.round})`
-            : `Continuation attempt ${continuationAttempt}/${this.maxContinuations}`,
-          pagesGenerated: accumulatedPages.length,
-          continuationAttempt,
-          maxContinuations: this.maxContinuations,
-        })
-
         console.log(`[ClaudeRunner] Calling Claude API for ${context.repo_owner}/${context.repo_name} (round ${context.round}, continuation ${continuationAttempt})`)
         console.log(`[ClaudeRunner] Prompt length: ${prompt.length} chars, System prompt length: ${REPO_DOC_SYSTEM_PROMPT.length} chars`)
 
-        let response
+        // Estimate time based on prompt size and model
+        // Rough estimate: ~1 second per 500 chars of prompt for Sonnet, plus output generation
+        const estimatedSeconds = Math.round((prompt.length + REPO_DOC_SYSTEM_PROMPT.length) / 500) + 60
+        console.log(`[ClaudeRunner] Estimated time: ~${estimatedSeconds}s`)
+
+        // Report initial progress with time estimate
+        await this.reportProgress({
+          stage: continuationAttempt === 0 ? 'calling_api' : 'continuation',
+          message: continuationAttempt === 0
+            ? `Connecting to Claude... (est. ${Math.round(estimatedSeconds / 60)}m)`
+            : `Continuation ${continuationAttempt}/${this.maxContinuations}`,
+          pagesGenerated: accumulatedPages.length,
+          continuationAttempt,
+          maxContinuations: this.maxContinuations,
+          estimatedTotalSeconds: estimatedSeconds,
+          elapsedSeconds: 0,
+        })
+
+        let rawOutput = ''
+        let stopReason: string | null = null
+        let streamingPages: string[] = []
+
         try {
           const startTime = Date.now()
-          const TIMEOUT_MS = 300000 // 5 minute timeout (larger prompts with verification need more time)
+          const TIMEOUT_MS = 300000 // 5 minute timeout
 
-          // Create AbortController for timeout
-          const abortController = new AbortController()
+          // Use streaming API for real-time progress updates
+          const stream = this.client.messages.stream({
+            model: this.model,
+            max_tokens: this.maxTokens,
+            system: REPO_DOC_SYSTEM_PROMPT,
+            messages: [
+              {
+                role: 'user',
+                content: prompt,
+              },
+            ],
+          })
+
+          // Set up timeout
           const timeoutId = setTimeout(() => {
             console.log(`[ClaudeRunner] Request timed out after ${TIMEOUT_MS/1000}s, aborting...`)
-            abortController.abort()
+            stream.abort()
           }, TIMEOUT_MS)
 
-          // Log heartbeat every 15 seconds while waiting
-          const heartbeatInterval = setInterval(() => {
-            const elapsed = Math.round((Date.now() - startTime) / 1000)
-            console.log(`[ClaudeRunner] Still waiting for API response... (${elapsed}s elapsed)`)
-          }, 15000)
+          let lastProgressUpdate = Date.now()
+          let tokensGenerated = 0
 
-          try {
-            response = await this.client.messages.create({
-              model: this.model,
-              max_tokens: this.maxTokens,
-              system: REPO_DOC_SYSTEM_PROMPT,
-              messages: [
-                {
-                  role: 'user',
-                  content: prompt,
-                },
-              ],
-            }, {
-              signal: abortController.signal,
-            })
-          } finally {
-            clearTimeout(timeoutId)
-            clearInterval(heartbeatInterval)
-          }
+          // Process stream events
+          stream.on('text', (text) => {
+            rawOutput += text
+            tokensGenerated += text.split(/\s+/).length // Rough token estimate
+
+            // Try to extract page titles from streaming content
+            const titleMatches = rawOutput.match(/"title"\s*:\s*"([^"]+)"/g)
+            if (titleMatches) {
+              streamingPages = titleMatches
+                .map(m => m.match(/"title"\s*:\s*"([^"]+)"/)?.[1])
+                .filter((t): t is string => !!t)
+            }
+
+            // Update progress every 5 seconds during streaming
+            const now = Date.now()
+            if (now - lastProgressUpdate > 5000) {
+              lastProgressUpdate = now
+              const elapsed = Math.round((now - startTime) / 1000)
+              const pagesFound = streamingPages.length
+              const totalPages = accumulatedPages.length + pagesFound
+
+              this.reportProgress({
+                stage: 'streaming',
+                message: `Generating documentation... Found ${totalPages} pages`,
+                pagesGenerated: totalPages,
+                continuationAttempt,
+                maxContinuations: this.maxContinuations,
+                estimatedTotalSeconds: estimatedSeconds,
+                elapsedSeconds: elapsed,
+                tokensGenerated,
+                streamingPages: streamingPages.slice(-5), // Last 5 page titles
+              }).catch(err => console.error('[ClaudeRunner] Progress error:', err))
+
+              console.log(`[ClaudeRunner] Streaming... ${elapsed}s elapsed, ${rawOutput.length} chars, ${pagesFound} pages found`)
+            }
+          })
+
+          // Wait for stream to complete
+          const finalMessage = await stream.finalMessage()
+          clearTimeout(timeoutId)
+
+          stopReason = finalMessage.stop_reason
 
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-          console.log(`[ClaudeRunner] API call completed in ${elapsed}s`)
+          console.log(`[ClaudeRunner] Streaming completed in ${elapsed}s`)
         } catch (apiError) {
           console.error('[ClaudeRunner] API call failed:', apiError)
           const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown API error'
@@ -230,17 +282,7 @@ export class ClaudeRunner implements IClaudeRunner {
           }
         }
 
-        // Extract text from response
-        const textContent = response.content.find(c => c.type === 'text')
-        if (!textContent || textContent.type !== 'text') {
-          return {
-            success: false,
-            error: 'No text content in Claude response',
-          }
-        }
-
-        const rawOutput = textContent.text
-        console.log(`[ClaudeRunner] Response received. Length: ${rawOutput?.length || 0} chars, stop_reason: ${response.stop_reason}`)
+        console.log(`[ClaudeRunner] Response received. Length: ${rawOutput?.length || 0} chars, stop_reason: ${stopReason}`)
 
         if (!rawOutput || rawOutput.length === 0) {
           return {
@@ -250,7 +292,7 @@ export class ClaudeRunner implements IClaudeRunner {
         }
 
         // Check if response was truncated
-        const wasTruncated = response.stop_reason === 'max_tokens'
+        const wasTruncated = stopReason === 'max_tokens'
         if (wasTruncated) {
           console.warn('[ClaudeRunner] Response was truncated (max_tokens). Attempting to extract partial data...')
         }

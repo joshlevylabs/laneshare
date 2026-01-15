@@ -836,10 +836,19 @@ export interface RepoDocPage {
   user_edited: boolean
   user_edited_at?: string
   user_edited_by?: string
+  // Review tracking
+  reviewed: boolean
+  reviewed_at?: string
+  reviewed_by?: string
+  // Original content for comparison
+  original_markdown?: string
+  verification_score?: number
+  verification_issues?: Array<{ type: string; message: string; file_path?: string }>
   created_at: string
   updated_at: string
   // Joined relations
   editor?: UserProfile
+  reviewer?: UserProfile
   bundle?: RepoDocBundle
 }
 

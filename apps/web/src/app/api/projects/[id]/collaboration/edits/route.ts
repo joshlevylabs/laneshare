@@ -214,10 +214,10 @@ export async function POST(
   // Check for potential conflicts
   const conflicts = await checkForConflicts(supabase, projectId, filePath, virtualBranchId)
 
-  // Update collaboration session stats
-  await supabase.rpc('increment_collaboration_edits', {
-    p_branch_id: virtualBranchId,
-  })
+  // TODO: Re-enable when increment_collaboration_edits function is created
+  // await supabase.rpc('increment_collaboration_edits', {
+  //   p_branch_id: virtualBranchId,
+  // })
 
   return NextResponse.json({
     edit,
@@ -271,6 +271,6 @@ async function checkForConflicts(
     branchId: edit.virtual_branch_id,
     branchName: (edit.virtual_branch as { name: string })?.name || 'Unknown',
     editId: edit.id,
-    editedAt: edit.created_at,
+    editedAt: edit.created_at || new Date().toISOString(),
   }))
 }

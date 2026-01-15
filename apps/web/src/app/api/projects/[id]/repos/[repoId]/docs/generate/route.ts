@@ -12,6 +12,7 @@ import { RepoContextProvider, generateRepoFingerprint } from '@/lib/repo-context
 import { createClaudeRunner, type ValidatedClaudeOutput, type ClaudeRunnerProgress } from '@/lib/claude-code-runner'
 import { verifyDocumentation, type VerificationSummary, type DocPage } from '@/lib/doc-verification'
 import type { RepoDocStatus, RepoDocBundleSummary, RepoDocCategory, RepoContext } from '@laneshare/shared'
+import type { Json } from '@/lib/supabase/types'
 
 // Progress info stored in the database for UI polling
 interface DocGenProgress {
@@ -22,13 +23,20 @@ interface DocGenProgress {
   maxRounds: number
   continuationAttempt?: number
   lastUpdated: string
+  // Time estimation
+  estimatedTotalSeconds?: number
+  elapsedSeconds?: number
+  // Streaming progress
+  streamingPages?: string[]
 }
 
 const GenerateRequestSchema = z.object({
   force: z.boolean().optional().default(false),
 })
 
-const MAX_ROUNDS = 3
+// Reduced from 3 to 2 - with improved file selection (critical files first),
+// we get most context in round 1, and rarely need a 3rd round
+const MAX_ROUNDS = 2
 
 export async function POST(
   request: Request,
@@ -212,11 +220,15 @@ async function runDocGeneration(
       maxRounds: MAX_ROUNDS,
       continuationAttempt: progress.continuationAttempt,
       lastUpdated: new Date().toISOString(),
+      // Include streaming/time estimation fields
+      estimatedTotalSeconds: progress.estimatedTotalSeconds,
+      elapsedSeconds: progress.elapsedSeconds,
+      streamingPages: progress.streamingPages,
     }
 
     await supabase
       .from('repo_doc_bundles')
-      .update({ progress_json: progressData })
+      .update({ progress_json: progressData as unknown as Json })
       .eq('id', bundleId)
   }
 
@@ -228,6 +240,9 @@ async function runDocGeneration(
         message: progress.message,
         pagesGenerated: progress.pagesGenerated,
         continuationAttempt: progress.continuationAttempt,
+        estimatedTotalSeconds: progress.estimatedTotalSeconds,
+        elapsedSeconds: progress.elapsedSeconds,
+        streamingPages: progress.streamingPages,
       })
     },
   })
@@ -267,6 +282,12 @@ async function runDocGeneration(
       lastContext = context // Save for verification
       const contextElapsed = ((Date.now() - contextStartTime) / 1000).toFixed(1)
       console.log(`[DocGen] Context built in ${contextElapsed}s. Key files: ${context.key_files.length}, Tree files: ${context.file_tree.length}`)
+
+      // Skip follow-up rounds if no files were fetched (avoids Claude complaining about missing context)
+      if (round > 1 && context.key_files.length === 0) {
+        console.log(`[DocGen] Skipping round ${round} - no additional files available to provide`)
+        break
+      }
 
       // Run Claude Code
       console.log(`[DocGen] Starting Claude API call for round ${round}...`)
@@ -356,9 +377,9 @@ async function runDocGeneration(
       pagesGenerated: uniquePages.length,
     })
 
-    // Save pages to database with verification results
+    // Build batch of pages to insert (MUCH faster than one-by-one)
     let needsReviewCount = 0
-    for (const page of uniquePages) {
+    const pagesToInsert = uniquePages.map(page => {
       // Get verification result for this page
       const pageVerification = verificationSummary?.pages.find(p => p.slug === page.slug)
 
@@ -379,34 +400,52 @@ async function runDocGeneration(
         } : undefined,
       }
 
-      await supabase
+      return {
+        bundle_id: bundleId,
+        project_id: projectId,
+        repo_id: repoId,
+        category: page.category,
+        slug: page.slug,
+        title: page.title,
+        markdown: page.markdown,
+        original_markdown: page.markdown, // Store original for comparison
+        evidence_json: evidenceWithVerification as unknown as Json,
+        needs_review: needsReview,
+        verification_score: pageVerification?.verification_score || 0,
+        verification_issues: (pageVerification?.issues || []) as unknown as Json,
+      }
+    })
+
+    // Batch insert all pages at once (single database call)
+    if (pagesToInsert.length > 0) {
+      const { error: pagesError } = await supabase
         .from('repo_doc_pages')
-        .insert({
-          bundle_id: bundleId,
-          project_id: projectId,
-          repo_id: repoId,
-          category: page.category,
-          slug: page.slug,
-          title: page.title,
-          markdown: page.markdown,
-          evidence_json: evidenceWithVerification,
-          needs_review: needsReview,
-        })
+        .insert(pagesToInsert)
+
+      if (pagesError) {
+        console.error('[DocGen] Failed to insert pages:', pagesError)
+      }
     }
 
-    // Save tasks
-    for (const task of allTasks) {
-      await supabase
+    // Batch insert tasks
+    if (allTasks.length > 0) {
+      const tasksToInsert = allTasks.map(task => ({
+        bundle_id: bundleId,
+        project_id: projectId,
+        repo_id: repoId,
+        title: task.title,
+        description: task.description,
+        category: task.category,
+        priority: task.priority || 'medium',
+      }))
+
+      const { error: tasksError } = await supabase
         .from('repo_doc_tasks')
-        .insert({
-          bundle_id: bundleId,
-          project_id: projectId,
-          repo_id: repoId,
-          title: task.title,
-          description: task.description,
-          category: task.category,
-          priority: task.priority || 'medium',
-        })
+        .insert(tasksToInsert)
+
+      if (tasksError) {
+        console.error('[DocGen] Failed to insert tasks:', tasksError)
+      }
     }
 
     // Calculate summary
@@ -440,7 +479,7 @@ async function runDocGeneration(
       .update({
         status: finalStatus,
         generated_at: new Date().toISOString(),
-        summary_json: summary,
+        summary_json: summary as unknown as Json,
         source_fingerprint: fingerprint,
         progress_json: null, // Clear progress on completion
       })

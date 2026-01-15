@@ -72,7 +72,7 @@ export async function POST(
 
   // Build context from existing messages
   const existingMessages: Array<{ id: string; sender: 'USER' | 'AI'; content: string; timestamp: string }> =
-    session.interview_messages || []
+    (session.interview_messages || []) as Array<{ id: string; sender: 'USER' | 'AI'; content: string; timestamp: string }>
 
   // Add user message
   const userMessage = {

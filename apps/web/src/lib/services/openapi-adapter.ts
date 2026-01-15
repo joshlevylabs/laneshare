@@ -17,7 +17,7 @@ import type {
   OpenApiRequestBody,
   OpenApiResponse,
   OpenApiSchemaRef,
-} from '@/lib/supabase/types'
+} from '@/lib/supabase/openapi-types'
 import type { ServiceAdapter, ValidationResult, SyncResult, DiscoveredAsset } from './types'
 
 // Configuration

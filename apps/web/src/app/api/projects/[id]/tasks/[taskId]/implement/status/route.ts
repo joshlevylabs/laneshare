@@ -92,7 +92,7 @@ export async function GET(
     const response: ImplementationStatusResponse = {
       session: {
         ...session,
-        iterations: iterations || [],
+        iterations: (iterations || []) as any, // DB nulls vs TS undefined
       },
       currentIteration,
       fileOperations: fileOperations || [],

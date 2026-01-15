@@ -11,7 +11,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
-import type { OpenApiEndpointAssetData } from '@/lib/supabase/types'
+import type { OpenApiEndpointAssetData } from '@/lib/supabase/openapi-types'
 
 export async function GET(
   request: Request,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { OpenApiAdapter } from './openapi-adapter'
-import type { OpenApiSyncStats } from '@/lib/supabase/types'
+import type { OpenApiSyncStats } from '@/lib/supabase/openapi-types'
 
 // OpenAPI 3.0 JSON fixture
 const openapi3Fixture = {

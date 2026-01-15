@@ -16,12 +16,14 @@ import type {
   EnvVarAssetData,
   SupabaseSyncStats,
   VercelSyncStats,
+} from '@/lib/supabase/supabase-service-types'
+import type {
   OpenApiSpecAssetData,
   OpenApiEndpointAssetData,
   OpenApiSchemaAssetData,
   OpenApiSecuritySchemeAssetData,
   OpenApiConfig,
-} from '@/lib/supabase/types'
+} from '@/lib/supabase/openapi-types'
 
 interface DocGenerationResult {
   pages: { slug: string; title: string; markdown: string }[]

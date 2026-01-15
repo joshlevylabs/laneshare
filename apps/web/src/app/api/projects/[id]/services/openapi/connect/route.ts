@@ -8,6 +8,7 @@ import { createOpenApiAdapter } from '@/lib/services'
 import { encrypt } from '@/lib/encryption'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { Json } from '@/lib/supabase/types'
 
 const connectSchema = z.object({
   openapi_url: z.string().url('Invalid URL format'),
@@ -112,7 +113,7 @@ export async function POST(
         spec_fingerprint: validationResult.metadata?.spec_fingerprint,
         spec_version: validationResult.metadata?.version,
         spec_title: validationResult.metadata?.title,
-      },
+      } as unknown as Json,
       secret_encrypted: encryptedSecrets,
       created_by: user.id,
     })

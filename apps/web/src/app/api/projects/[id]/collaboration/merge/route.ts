@@ -14,7 +14,7 @@ import type {
   FileConflictContext,
   ConflictingEdit,
   EditStreamEntry,
-} from '@laneshare/shared/types/collaborative-editing'
+} from '@laneshare/shared'
 
 // Schema for merge request
 const mergeSchema = z.object({
@@ -109,8 +109,28 @@ export async function POST(
     })
   }
 
+  // Map database rows to EditStreamEntry format
+  const mappedEdits: EditStreamEntry[] = edits.map((edit) => ({
+    id: edit.id,
+    virtualBranchId: edit.virtual_branch_id,
+    projectId: edit.project_id,
+    operation: edit.operation as 'create' | 'edit' | 'delete' | 'rename',
+    filePath: edit.file_path,
+    oldFilePath: edit.old_file_path ?? undefined,
+    oldContent: edit.old_content ?? undefined,
+    newContent: edit.new_content ?? undefined,
+    linesAdded: edit.lines_added ?? 0,
+    linesRemoved: edit.lines_removed ?? 0,
+    agentReasoning: edit.agent_reasoning ?? undefined,
+    relatedTaskId: edit.related_task_id ?? undefined,
+    sequenceNum: edit.sequence_num ?? 0,
+    createdAt: edit.created_at || new Date().toISOString(),
+    fileHashBefore: edit.file_hash_before ?? undefined,
+    fileHashAfter: edit.file_hash_after ?? undefined,
+  }))
+
   // Detect conflicts
-  const conflictMap = detectConflicts(edits as EditStreamEntry[])
+  const conflictMap = detectConflicts(mappedEdits)
 
   if (conflictMap.size === 0) {
     return NextResponse.json({
@@ -122,7 +142,7 @@ export async function POST(
   // Build file conflict contexts for the integrator
   const conflicts: FileConflictContext[] = []
 
-  for (const [filePath, fileEdits] of conflictMap) {
+  Array.from(conflictMap.entries()).forEach(([filePath, fileEdits]) => {
     // Get original content (from the first edit's old_content or fetch from canonical state)
     const originalContent = fileEdits[0].oldContent || ''
 
@@ -141,7 +161,7 @@ export async function POST(
       edits: conflictingEdits,
       language: detectLanguage(filePath),
     })
-  }
+  })
 
   // Create merge event record
   const { data: mergeEvent, error: mergeError } = await supabase
@@ -169,7 +189,7 @@ export async function POST(
   const integratorInput: IntegratorInput = {
     projectContext: {
       name: project?.name || 'Unknown',
-      description: project?.description,
+      description: project?.description ?? undefined,
     },
     conflicts,
     preferences: {

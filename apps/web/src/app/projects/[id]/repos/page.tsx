@@ -29,11 +29,17 @@ export default async function ReposPage({
   const hasGitHubAccess = isGitHubOAuthUser || !!connection
 
   // Fetch repos
-  const { data: repos } = await supabase
+  const { data: reposData } = await supabase
     .from('repos')
     .select('*')
     .eq('project_id', params.id)
     .order('installed_at', { ascending: false })
+
+  // Transform repos to include has_codespaces_token flag
+  const repos = (reposData || []).map((repo) => ({
+    ...repo,
+    has_codespaces_token: !!repo.github_token_encrypted,
+  }))
 
   return (
     <div className="space-y-6">
@@ -63,7 +69,7 @@ export default async function ReposPage({
           </CardContent>
         </Card>
       ) : (
-        <ReposList repos={repos || []} projectId={params.id} />
+        <ReposList repos={repos} projectId={params.id} />
       )}
     </div>
   )

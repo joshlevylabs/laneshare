@@ -12,6 +12,7 @@ const UpdatePageSchema = z.object({
   markdown: z.string().min(1).optional(),
   title: z.string().min(1).max(200).optional(),
   needs_review: z.boolean().optional(),
+  reviewed: z.boolean().optional(),
 })
 
 export async function GET(
@@ -164,6 +165,15 @@ export async function PATCH(
       updateData.user_edited = true
       updateData.user_edited_at = new Date().toISOString()
       updateData.user_edited_by = user.id
+    }
+
+    // If marking as reviewed, set reviewed_at and reviewed_by
+    if (updates.reviewed === true) {
+      updateData.reviewed_at = new Date().toISOString()
+      updateData.reviewed_by = user.id
+    } else if (updates.reviewed === false) {
+      updateData.reviewed_at = null
+      updateData.reviewed_by = null
     }
 
     // Update the page

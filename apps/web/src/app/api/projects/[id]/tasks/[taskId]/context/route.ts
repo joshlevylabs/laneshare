@@ -177,7 +177,7 @@ export async function GET(
         .in('id', missingDocIds)
 
       for (const d of legacyDocs || []) {
-        docsMap.set(d.id, d)
+        docsMap.set(d.id, d as any) // Legacy doc_pages has different category enum
       }
     }
 
@@ -426,7 +426,7 @@ export async function POST(
   }
 
   // Log activity
-  await supabase.from('task_activities').insert({
+  await supabase.from('task_activity').insert({
     task_id: params.taskId,
     project_id: params.id,
     actor_id: user.id,
@@ -541,7 +541,7 @@ export async function DELETE(
   }
 
   // Log activity
-  await supabase.from('task_activities').insert({
+  await supabase.from('task_activity').insert({
     task_id: params.taskId,
     project_id: params.id,
     actor_id: user.id,

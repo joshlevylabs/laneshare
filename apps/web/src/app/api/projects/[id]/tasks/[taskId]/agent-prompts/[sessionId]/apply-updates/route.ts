@@ -123,7 +123,7 @@ export async function POST(
     })
 
     results.statusUpdated = true
-    results.previousStatus = previousStatus
+    results.previousStatus = previousStatus ?? undefined
     results.newStatus = parseResult.data.newStatus
   }
 

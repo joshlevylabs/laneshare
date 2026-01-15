@@ -1,24 +1,15 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-} from '@/components/ui/collapsible'
-import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
-import { WorkspaceTabBar } from './workspace-tab-bar'
-import { WorkspaceSession } from './workspace-session'
+import { WorkspaceTabs, type WorkspaceTab } from './workspace-tabs'
+import { WorkspaceTerminal } from './workspace-terminal'
+import { WorkspaceOrchestrator } from './workspace-orchestrator'
 import { WorkspaceConnectionSetup } from './workspace-connection-setup'
-import { WorkspaceTaskSelector } from './workspace-task-selector'
-import { WorkspaceFileActivity } from './workspace-file-activity'
-import { WorkspaceGitControls } from './workspace-git-controls'
-import { WorkspaceGitStatus } from './workspace-git-status'
-import { Plus, Terminal, PanelRightClose, PanelRight, Cloud, ExternalLink } from 'lucide-react'
+import { Cloud, Terminal, Sparkles } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import type { Task } from '@laneshare/shared'
 import type { GitHubCodespace } from '@/lib/github'
-import { cn } from '@/lib/utils'
 
 export interface WorkspaceMessageData {
   id: string
@@ -40,6 +31,7 @@ export interface WorkspaceSessionData {
   status: 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR'
   connection_config: Record<string, unknown>
   error_message: string | null
+  bridge_connected: boolean
   created_by: string
   created_at: string
   updated_at: string
@@ -65,318 +57,170 @@ export function WorkspaceView({
   tasks = [],
 }: WorkspaceViewProps) {
   const { toast } = useToast()
-  const [sessions, setSessions] = useState<WorkspaceSessionData[]>(initialSessions)
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(
-    initialSessions[0]?.id ?? null
-  )
-  const [showTaskSelector, setShowTaskSelector] = useState(false)
+
+  // Multi-tab workspace state
+  const [tabs, setTabs] = useState<WorkspaceTab[]>([])
+  const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [showConnectionSetup, setShowConnectionSetup] = useState(false)
-  const [showActivityPanel, setShowActivityPanel] = useState(true)
+  const [orchestratorExpanded, setOrchestratorExpanded] = useState(false)
 
-  // Codespace state
-  const [connectedCodespace, setConnectedCodespace] = useState<GitHubCodespace | null>(null)
-  const [isPollingCodespace, setIsPollingCodespace] = useState(false)
+  const activeTab = tabs.find((t) => t.id === activeTabId)
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId)
-  const activeCloneId = activeSession?.local_clone_id ?? null
-
-  // Poll codespace status when connected
+  // Poll for codespace status updates
   const pollCodespaceStatus = useCallback(async () => {
-    if (!connectedCodespace) return
-
-    try {
-      const response = await fetch(
-        `/api/projects/${projectId}/codespaces/${connectedCodespace.name}`
-      )
-      if (response.ok) {
-        const { codespace } = await response.json()
-        setConnectedCodespace(codespace)
-
-        // If codespace stopped, clear connection
-        if (codespace.state === 'Shutdown' || codespace.state === 'Failed') {
-          toast({
-            variant: 'destructive',
-            title: 'Codespace stopped',
-            description: 'The connected codespace has been stopped.',
-          })
+    for (const tab of tabs) {
+      try {
+        const response = await fetch(
+          `/api/projects/${projectId}/codespaces/${tab.codespace.name}`
+        )
+        if (response.ok) {
+          const { codespace } = await response.json()
+          setTabs((prev) =>
+            prev.map((t) =>
+              t.id === tab.id ? { ...t, codespace } : t
+            )
+          )
         }
+      } catch {
+        // Ignore polling errors
       }
-    } catch {
-      // Ignore polling errors
     }
-  }, [connectedCodespace, projectId, toast])
+  }, [tabs, projectId])
 
   useEffect(() => {
-    if (!connectedCodespace) return
+    if (tabs.length === 0) return
 
-    // Poll every 30 seconds
     const interval = setInterval(pollCodespaceStatus, 30000)
     return () => clearInterval(interval)
-  }, [connectedCodespace, pollCodespaceStatus])
+  }, [tabs.length, pollCodespaceStatus])
 
-  const handleConnectCodespace = (codespace: GitHubCodespace) => {
-    setConnectedCodespace(codespace)
+  const handleAddCodespace = (codespace: GitHubCodespace) => {
+    // Check if this codespace is already in tabs
+    const existingTab = tabs.find((t) => t.codespace.name === codespace.name)
+    if (existingTab) {
+      setActiveTabId(existingTab.id)
+      setShowConnectionSetup(false)
+      toast({
+        title: 'Already Connected',
+        description: `${codespace.repository.name} is already in your workspace.`,
+      })
+      return
+    }
+
+    const newTab: WorkspaceTab = {
+      id: crypto.randomUUID(),
+      codespace,
+      repoName: codespace.repository.name,
+      repoOwner: codespace.repository.owner.login,
+    }
+    setTabs((prev) => [...prev, newTab])
+    setActiveTabId(newTab.id)
     setShowConnectionSetup(false)
+
     toast({
-      title: 'Connected to Codespace',
-      description: `Now connected to ${codespace.display_name || codespace.name}`,
+      title: 'Codespace Connected',
+      description: `Added ${codespace.repository.name} to your workspace.`,
     })
   }
 
-  const handleDisconnectCodespace = () => {
-    setConnectedCodespace(null)
-    toast({
-      title: 'Disconnected',
-      description: 'Codespace has been disconnected.',
-    })
-  }
+  const handleCloseTab = (tabId: string) => {
+    const closingTab = tabs.find((t) => t.id === tabId)
+    setTabs((prev) => prev.filter((t) => t.id !== tabId))
 
-  const handleCreateSession = async (taskId: string) => {
-    try {
-      const response = await fetch(`/api/projects/${projectId}/workspace/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task_id: taskId,
-          codespace_name: connectedCodespace?.name,
-        }),
-      })
+    if (activeTabId === tabId) {
+      const remainingTabs = tabs.filter((t) => t.id !== tabId)
+      setActiveTabId(remainingTabs[0]?.id ?? null)
+    }
 
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Failed to create session')
-      }
-
-      const newSession = await response.json()
-      setSessions((prev) => [...prev, newSession])
-      setActiveSessionId(newSession.id)
-      setShowTaskSelector(false)
-      toast({ title: 'Session created' })
-    } catch (error) {
+    if (closingTab) {
       toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to create session',
+        title: 'Workspace Closed',
+        description: `Removed ${closingTab.repoName} from your workspace.`,
       })
     }
   }
 
-  const handleCloseSession = async (sessionId: string) => {
-    try {
-      await fetch(`/api/projects/${projectId}/workspace/sessions/${sessionId}`, {
-        method: 'DELETE',
-      })
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId))
-      if (activeSessionId === sessionId) {
-        setActiveSessionId(sessions.find((s) => s.id !== sessionId)?.id ?? null)
-      }
-      toast({ title: 'Session closed' })
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Failed to close session',
-      })
-    }
-  }
+  // Empty state - no workspaces connected
+  if (tabs.length === 0 && !showConnectionSetup) {
+    return (
+      <div className="flex flex-col h-[calc(100vh-8rem)]">
+        {/* Empty state */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center max-w-lg">
+            <div className="relative mb-8">
+              <Cloud className="h-20 w-20 mx-auto text-muted-foreground/30" />
+              <Terminal className="h-10 w-10 absolute bottom-0 right-1/2 translate-x-8 text-primary" />
+            </div>
+            <h2 className="text-2xl font-semibold mb-3">Multi-Repo Workspace</h2>
+            <p className="text-muted-foreground mb-6">
+              Connect to GitHub Codespaces and work with Claude Code directly in your browser.
+              Add multiple repositories and use the Orchestrator to coordinate between them.
+            </p>
+            <div className="flex flex-col gap-3 items-center">
+              <Button size="lg" onClick={() => setShowConnectionSetup(true)}>
+                <Cloud className="h-4 w-4 mr-2" />
+                Connect to Codespace
+              </Button>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Sparkles className="h-4 w-4 text-purple-500" />
+                <span>Orchestrator agent helps coordinate cross-repo work</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-  const handleStatusChange = (sessionId: string, status: WorkspaceSessionData['status']) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === sessionId ? { ...s, status } : s))
+        {/* Connection dialog */}
+        <WorkspaceConnectionSetup
+          open={showConnectionSetup}
+          onOpenChange={setShowConnectionSetup}
+          projectId={projectId}
+          onConnect={handleAddCodespace}
+        />
+      </div>
     )
   }
-
-  const handleMessagesUpdate = (sessionId: string, messages: WorkspaceMessageData[]) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === sessionId ? { ...s, messages } : s))
-    )
-  }
-
-  const isCodespaceAvailable = connectedCodespace?.state === 'Available'
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
-      {/* Connection status banner */}
-      {!connectedCodespace ? (
-        <div className="bg-yellow-50 dark:bg-yellow-950 border-b border-yellow-200 dark:border-yellow-800 px-4 py-2 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-yellow-800 dark:text-yellow-200">
-            <Cloud className="h-4 w-4" />
-            <span>No Codespace connected</span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowConnectionSetup(true)}
-            className="text-xs"
-          >
-            Connect to Codespace
-          </Button>
-        </div>
-      ) : (
-        <div className={cn(
-          'border-b px-4 py-2 flex items-center justify-between',
-          isCodespaceAvailable
-            ? 'bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800'
-            : 'bg-yellow-50 dark:bg-yellow-950 border-yellow-200 dark:border-yellow-800'
-        )}>
-          <div className="flex items-center gap-2 text-sm">
-            <div className={cn(
-              'w-2 h-2 rounded-full',
-              isCodespaceAvailable ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
-            )} />
-            <Cloud className="h-4 w-4" />
-            <span className="font-medium">
-              {connectedCodespace.display_name || connectedCodespace.name}
-            </span>
-            <Badge variant="outline" className="text-xs">
-              {connectedCodespace.state}
-            </Badge>
-            {connectedCodespace.git_status && (
-              <span className="text-xs text-muted-foreground">
-                on {connectedCodespace.git_status.ref}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => window.open(connectedCodespace.web_url, '_blank')}
-            >
-              <ExternalLink className="h-3 w-3 mr-1" />
-              Open in Browser
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => setShowConnectionSetup(true)}
-            >
-              Change
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-destructive hover:text-destructive"
-              onClick={handleDisconnectCodespace}
-            >
-              Disconnect
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* Tab bar */}
-      <WorkspaceTabBar
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        onSelectSession={setActiveSessionId}
-        onCloseSession={handleCloseSession}
-        onNewSession={() => setShowTaskSelector(true)}
+      <WorkspaceTabs
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelectTab={setActiveTabId}
+        onCloseTab={handleCloseTab}
+        onAddTab={() => setShowConnectionSetup(true)}
       />
 
-      {/* Main content - split pane layout */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Session chat */}
-        <div className="flex-1 min-w-0 overflow-hidden">
-          {activeSession ? (
-            <WorkspaceSession
-              session={activeSession}
-              codespace={connectedCodespace}
-              onStatusChange={(status) => handleStatusChange(activeSession.id, status)}
-              onMessagesUpdate={(messages) => handleMessagesUpdate(activeSession.id, messages)}
-            />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
-              <Terminal className="h-12 w-12" />
-              <div className="text-center">
-                <h3 className="font-medium text-lg">No Active Sessions</h3>
-                <p className="text-sm">
-                  {connectedCodespace
-                    ? 'Start a new Claude Code session for a task'
-                    : 'Connect to a Codespace to get started'}
-                </p>
-              </div>
-              {connectedCodespace ? (
-                <Button onClick={() => setShowTaskSelector(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Start New Session
-                </Button>
-              ) : (
-                <Button onClick={() => setShowConnectionSetup(true)}>
-                  <Cloud className="h-4 w-4 mr-2" />
-                  Connect to Codespace
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Activity panel toggle button */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute right-0 top-1/2 -translate-y-1/2 z-10 h-12 w-6 rounded-l-md rounded-r-none border border-r-0 bg-background shadow-sm"
-          onClick={() => setShowActivityPanel(!showActivityPanel)}
-        >
-          {showActivityPanel ? (
-            <PanelRightClose className="h-4 w-4" />
-          ) : (
-            <PanelRight className="h-4 w-4" />
-          )}
-        </Button>
-
-        {/* Right: Activity panel (collapsible) */}
-        <Collapsible open={showActivityPanel} className="relative">
-          <CollapsibleContent
-            className={cn(
-              'w-80 border-l bg-background flex flex-col h-full overflow-hidden',
-              'data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down'
-            )}
-          >
-            {/* Git controls bar */}
-            <WorkspaceGitControls
-              cloneId={activeCloneId}
-              projectId={projectId}
-              codespace={connectedCodespace}
-            />
-
-            {/* File activity - upper section */}
-            <div className="flex-1 min-h-0 border-b overflow-hidden">
-              <WorkspaceFileActivity
-                sessionId={activeSessionId}
-                projectId={projectId}
-              />
-            </div>
-
-            {/* Git status - lower section */}
-            <div className="h-64 min-h-0 overflow-hidden">
-              <WorkspaceGitStatus
-                cloneId={activeCloneId}
-                projectId={projectId}
-                codespace={connectedCodespace}
-              />
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+      {/* Main content - embedded terminal */}
+      <div className="flex-1 min-h-0 p-4">
+        {activeTab ? (
+          <WorkspaceTerminal
+            codespaceUrl={activeTab.codespace.web_url}
+            codespaceName={activeTab.codespace.name}
+            repoName={`${activeTab.repoOwner}/${activeTab.repoName}`}
+            isActive={activeTab.codespace.state === 'Available'}
+          />
+        ) : tabs.length > 0 ? (
+          <div className="flex items-center justify-center h-full text-muted-foreground">
+            <p>Select a tab to view the terminal</p>
+          </div>
+        ) : null}
       </div>
 
-      {/* Dialogs */}
-      <WorkspaceTaskSelector
-        open={showTaskSelector}
-        onOpenChange={setShowTaskSelector}
+      {/* Orchestrator panel */}
+      <WorkspaceOrchestrator
+        tabs={tabs}
         projectId={projectId}
-        existingTaskIds={sessions.map((s) => s.task_id)}
-        onSelectTask={(task) => handleCreateSession(task.id)}
+        isExpanded={orchestratorExpanded}
+        onToggleExpand={() => setOrchestratorExpanded(!orchestratorExpanded)}
       />
 
+      {/* Connection dialog */}
       <WorkspaceConnectionSetup
         open={showConnectionSetup}
         onOpenChange={setShowConnectionSetup}
         projectId={projectId}
-        onConnect={handleConnectCodespace}
-        selectedCodespace={connectedCodespace}
+        onConnect={handleAddCodespace}
       />
     </div>
   )

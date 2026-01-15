@@ -12,6 +12,9 @@ export * from './context-ai'
 // Re-export repo documentation prompts (Claude Code wrapper)
 export * from './repo-docs'
 
+// Re-export doc verification prompts (for coding agent verification)
+export * from './doc-verification-prompt'
+
 // Re-export implementation agent prompts
 export * from './implementation-agent'
 

@@ -16,7 +16,7 @@ import type {
   PolicyAssetData,
   FunctionAssetData,
   BucketAssetData,
-} from '@/lib/supabase/types'
+} from '@/lib/supabase/supabase-service-types'
 import type { ServiceAdapter, ValidationResult, SyncResult, DiscoveredAsset } from './types'
 
 // Supabase Management API base URL

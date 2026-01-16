@@ -11,6 +11,7 @@ export interface WorkspaceTab {
   codespace: GitHubCodespace
   repoName: string
   repoOwner: string
+  repoId: string
 }
 
 interface WorkspaceTabsProps {

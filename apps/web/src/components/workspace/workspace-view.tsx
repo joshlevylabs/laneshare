@@ -94,7 +94,7 @@ export function WorkspaceView({
     return () => clearInterval(interval)
   }, [tabs.length, pollCodespaceStatus])
 
-  const handleAddCodespace = (codespace: GitHubCodespace) => {
+  const handleAddCodespace = (codespace: GitHubCodespace, repoId: string) => {
     // Check if this codespace is already in tabs
     const existingTab = tabs.find((t) => t.codespace.name === codespace.name)
     if (existingTab) {
@@ -112,6 +112,7 @@ export function WorkspaceView({
       codespace,
       repoName: codespace.repository.name,
       repoOwner: codespace.repository.owner.login,
+      repoId,
     }
     setTabs((prev) => [...prev, newTab])
     setActiveTabId(newTab.id)
@@ -198,6 +199,7 @@ export function WorkspaceView({
             codespaceUrl={activeTab.codespace.web_url}
             codespaceName={activeTab.codespace.name}
             repoName={`${activeTab.repoOwner}/${activeTab.repoName}`}
+            repoId={activeTab.repoId}
             isActive={activeTab.codespace.state === 'Available'}
           />
         ) : tabs.length > 0 ? (

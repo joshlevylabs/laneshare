@@ -56,7 +56,7 @@ interface WorkspaceConnectionSetupProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
-  onConnect: (codespace: GitHubCodespace) => void
+  onConnect: (codespace: GitHubCodespace, repoId: string) => void
   selectedCodespace?: GitHubCodespace | null
 }
 
@@ -163,7 +163,7 @@ export function WorkspaceConnectionSetup({
       setShowCreateForm(false)
 
       // Auto-connect to the new codespace
-      onConnect(codespace)
+      onConnect(codespace, selectedRepoId)
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to create codespace')
     } finally {
@@ -390,7 +390,7 @@ export function WorkspaceConnectionSetup({
               </div>
             ) : (
               <div className="space-y-2">
-                {codespaces.map(({ codespace, repoFullName }) => (
+                {codespaces.map(({ codespace, repoId, repoFullName }) => (
                   <div
                     key={codespace.name}
                     className={cn(
@@ -489,7 +489,7 @@ export function WorkspaceConnectionSetup({
                             <Button
                               variant="default"
                               size="sm"
-                              onClick={() => onConnect(codespace)}
+                              onClick={() => onConnect(codespace, repoId)}
                             >
                               Connect
                             </Button>

@@ -1,0 +1,28 @@
+{
+  "name": "LaneShare Workspace",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y ttyd && npm install -g @anthropic-ai/claude-code",
+  "postStartCommand": "nohup ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 &",
+  "forwardPorts": [
+    7681
+  ],
+  "portsAttributes": {
+    "7681": {
+      "label": "ttyd Terminal",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropics.claude-code"
+      ]
+    }
+  }
+}

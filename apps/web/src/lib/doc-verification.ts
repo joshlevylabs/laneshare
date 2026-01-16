@@ -79,8 +79,8 @@ function calculateSimilarity(str1: string, str2: string): number {
   const words1 = new Set(norm1.split(/\s+/))
   const words2 = new Set(norm2.split(/\s+/))
 
-  const intersection = new Set([...words1].filter(x => words2.has(x)))
-  const union = new Set([...words1, ...words2])
+  const intersection = new Set(Array.from(words1).filter(x => words2.has(x)))
+  const union = new Set([...Array.from(words1), ...Array.from(words2)])
 
   return intersection.size / union.size
 }
@@ -155,7 +155,7 @@ export function verifyPage(
     // Check if file exists in available files
     const fileExists = availableFiles.has(normalizedPath) ||
       availableFiles.has(ev.file_path) ||
-      [...availableFiles].some(f => f.endsWith(normalizedPath) || normalizedPath.endsWith(f))
+      Array.from(availableFiles).some(f => f.endsWith(normalizedPath) || normalizedPath.endsWith(f))
 
     if (!fileExists) {
       issues.push({
@@ -171,7 +171,7 @@ export function verifyPage(
     // Get file content
     const content = fileContents.get(normalizedPath) ||
       fileContents.get(ev.file_path) ||
-      [...fileContents.entries()].find(([k]) =>
+      Array.from(fileContents.entries()).find(([k]) =>
         k.endsWith(normalizedPath) || normalizedPath.endsWith(k)
       )?.[1]
 

@@ -68,13 +68,14 @@ export default async function DocumentsPage({
     .order('updated_at', { ascending: false })
 
   // Transform to extract first creator from array (Supabase returns arrays for joins)
+  // Cast through unknown to handle DB null vs TS undefined mismatch
   const docsWithCreator = (documents || []).map((doc) => {
     const { creator, ...docData } = doc as typeof doc & { creator: unknown[] }
     return {
       ...docData,
       creator: Array.isArray(creator) ? creator[0] : creator,
     }
-  })
+  }) as unknown as Parameters<typeof DocumentsView>[0]['documents']
 
   return (
     <DocumentsView

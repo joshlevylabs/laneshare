@@ -244,3 +244,61 @@ LIMIT 10;
 ## Encrypted Fields
 
 Sensitive data (tokens, keys) should be encrypted at application level before storage. Store as TEXT, not JSONB.
+
+## Feature-Specific Migrations
+
+### Bridge Connections (`20240203000000_bridge_connections.sql`)
+
+Schema for Claude Code bridge connections (Codespace ↔ LaneShare communication).
+
+| Table | Description |
+|-------|-------------|
+| `bridge_connections` | Active bridge connection sessions |
+| `bridge_prompt_queue` | Queue of prompts awaiting execution |
+
+**Key Columns (bridge_connections):**
+- `connection_id`: Unique identifier for the connection
+- `user_id`: Owner of the connection
+- `session_id`: Current session identifier
+- `status`: 'connected', 'disconnected', 'idle'
+- `last_heartbeat`: For connection health monitoring
+
+**Key Columns (bridge_prompt_queue):**
+- `connection_id`: Target bridge connection
+- `prompt`: The prompt to execute
+- `status`: 'pending', 'processing', 'completed', 'failed'
+- `response`: Response from Claude Code
+
+### Parallel Doc Generation (`20240205000000_parallel_doc_generation.sql`)
+
+Schema updates for 7-terminal parallel document generation.
+
+**bridge_prompt_queue Updates:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `prompt_type` | TEXT | 'general' or 'doc_generation' |
+| `doc_type` | TEXT | Document type: AGENTS_SUMMARY, ARCHITECTURE, FEATURES, APIS, RUNBOOK, ADRS, SUMMARY |
+| `result_bundle_id` | UUID | Links to target `repo_doc_bundles` |
+| `streaming_output` | TEXT | Accumulated output during streaming generation |
+
+**repo_doc_bundles Updates:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `agent_context_files` | JSONB | Array of discovered agents.md file paths |
+| `generation_mode` | TEXT | 'parallel' (new 7-terminal) or 'legacy' (single API call) |
+
+**repo_doc_pages Updates:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `original_markdown` | TEXT | Original generated markdown before user edits |
+| `verification_score` | INT | Score from verification pass (0-100) |
+| `verification_issues` | JSONB | Array of verification issues found |
+| `reviewed_at` | TIMESTAMPTZ | When page was marked as reviewed |
+| `reviewed_by` | UUID | User who reviewed the page |
+
+**Indexes:**
+- `idx_bridge_prompt_queue_bundle` - For doc generation queries
+- `idx_bridge_prompt_queue_doc_type` - For finding prompts by doc type
+- `idx_repo_doc_bundles_generation_mode` - For generation mode queries
+- `idx_repo_doc_pages_verification` - For pages needing verification (score < 80)
+- `idx_repo_doc_pages_reviewed` - For reviewed pages

@@ -165,7 +165,7 @@ export async function PATCH(
 
   const { data: task, error } = await supabase
     .from('tasks')
-    .update(result.data)
+    .update(result.data as any)
     .eq('id', params.taskId)
     .eq('project_id', params.id)
     .select(`

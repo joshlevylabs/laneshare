@@ -36,12 +36,33 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-import type {
-  OpenApiParameter,
-  OpenApiRequestBody,
-  OpenApiResponse,
-  OpenApiSchemaRef,
-} from '@/lib/supabase/types'
+
+// OpenAPI types used for endpoint details
+interface OpenApiSchemaRef {
+  $ref?: string
+  type?: string
+  items?: OpenApiSchemaRef
+  properties?: Record<string, OpenApiSchemaRef>
+}
+
+interface OpenApiParameter {
+  name: string
+  in: 'query' | 'header' | 'path' | 'cookie'
+  required?: boolean
+  schema?: OpenApiSchemaRef
+  description?: string
+}
+
+interface OpenApiRequestBody {
+  description?: string
+  required?: boolean
+  content?: Record<string, { schema?: OpenApiSchemaRef }>
+}
+
+interface OpenApiResponse {
+  description?: string
+  content?: Record<string, { schema?: OpenApiSchemaRef }>
+}
 
 interface Endpoint {
   id: string

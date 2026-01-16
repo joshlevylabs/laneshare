@@ -11,11 +11,15 @@ import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supab
 import { RepoContextProvider, generateRepoFingerprint } from '@/lib/repo-context-provider'
 import { createClaudeRunner, type ValidatedClaudeOutput, type ClaudeRunnerProgress } from '@/lib/claude-code-runner'
 import { verifyDocumentation, type VerificationSummary, type DocPage } from '@/lib/doc-verification'
-import type { RepoDocStatus, RepoDocBundleSummary, RepoDocCategory, RepoContext } from '@laneshare/shared'
+import { runParallelDocGeneration } from '@/lib/doc-generation-orchestrator'
+import type { RepoDocStatus, RepoDocBundleSummary, RepoDocCategory, RepoContext, DocGenerationSession } from '@laneshare/shared'
 import type { Json } from '@/lib/supabase/types'
 
-// Progress info stored in the database for UI polling
-interface DocGenProgress {
+// Generation modes
+type GenerationMode = 'legacy' | 'parallel'
+
+// Progress info stored in the database for UI polling (legacy mode)
+interface LegacyDocGenProgress {
   stage: ClaudeRunnerProgress['stage']
   message: string
   pagesGenerated: number
@@ -28,10 +32,34 @@ interface DocGenProgress {
   elapsedSeconds?: number
   // Streaming progress
   streamingPages?: string[]
+  // Mode indicator
+  mode: 'legacy'
 }
+
+// Progress info for parallel mode (matches DocGenerationSession progress)
+interface ParallelDocGenProgress {
+  mode: 'parallel'
+  phase: DocGenerationSession['phase']
+  jobs: Record<string, {
+    status: string
+    startedAt?: string
+    completedAt?: string
+    error?: string
+  }>
+  pagesGenerated: number
+  totalPages: number
+  startedAt?: string
+  lastUpdated: string
+}
+
+type DocGenProgress = LegacyDocGenProgress | ParallelDocGenProgress
 
 const GenerateRequestSchema = z.object({
   force: z.boolean().optional().default(false),
+  mode: z.enum(['legacy', 'parallel']).optional().default('legacy'),
+  // For parallel mode with bridge connection
+  connectionId: z.string().uuid().optional(),
+  sessionId: z.string().uuid().optional(),
 })
 
 // Reduced from 3 to 2 - with improved file selection (critical files first),
@@ -71,7 +99,7 @@ export async function POST(
 
     // Parse request body
     const body = await request.json().catch(() => ({}))
-    const { force } = GenerateRequestSchema.parse(body)
+    const { force, mode, connectionId, sessionId } = GenerateRequestSchema.parse(body)
 
     // Get repo info
     const { data: repo, error: repoError } = await supabase
@@ -142,6 +170,7 @@ export async function POST(
         status: 'PENDING' as RepoDocStatus,
         generated_by: user.id,
         source_fingerprint: fingerprint,
+        generation_mode: mode,
       })
       .select()
       .single()
@@ -160,23 +189,43 @@ export async function POST(
       })
       .eq('id', repoId)
 
-    // Start generation in background
-    runDocGeneration(
-      projectId,
-      repoId,
-      bundle.id,
-      user.id,
-      serviceClient,
-      fingerprint
-    ).catch(error => {
-      console.error('[DocGen] Background generation failed:', error)
-    })
+    // Start generation in background based on mode
+    if (mode === 'parallel') {
+      console.log(`[DocGen] Starting PARALLEL generation for bundle ${bundle.id}`)
+      runParallelDocGeneration({
+        bundleId: bundle.id,
+        projectId,
+        repoId,
+        userId: user.id,
+        connectionId,
+        sessionId,
+        supabase: serviceClient,
+        onProgress: (session) => {
+          console.log(`[DocGen] Parallel progress: ${session.phase}, ${Object.values(session.jobs).filter(j => j.status === 'completed').length}/7 completed`)
+        },
+      }).catch(error => {
+        console.error('[DocGen] Parallel generation failed:', error)
+      })
+    } else {
+      console.log(`[DocGen] Starting LEGACY generation for bundle ${bundle.id}`)
+      runDocGeneration(
+        projectId,
+        repoId,
+        bundle.id,
+        user.id,
+        serviceClient,
+        fingerprint
+      ).catch(error => {
+        console.error('[DocGen] Background generation failed:', error)
+      })
+    }
 
     return NextResponse.json({
       message: 'Documentation generation started',
       bundle_id: bundle.id,
       version: nextVersion,
       status: 'GENERATING',
+      mode,
     })
   } catch (error) {
     console.error('[DocGen] Error:', error)
@@ -211,8 +260,9 @@ async function runDocGeneration(
   let lastContext: RepoContext | undefined // Keep track of context for verification
 
   // Helper to update progress in the database
-  const updateProgress = async (progress: Partial<DocGenProgress>) => {
-    const progressData: DocGenProgress = {
+  const updateProgress = async (progress: Partial<LegacyDocGenProgress>) => {
+    const progressData: LegacyDocGenProgress = {
+      mode: 'legacy',
       stage: progress.stage || 'starting',
       message: progress.message || '',
       pagesGenerated: progress.pagesGenerated ?? allPages.length,

@@ -112,13 +112,14 @@ export default async function TasksPage({
   ])
 
   // Fetch features if we have a snapshot
+  // Cast to handle DB null vs TS undefined mismatch
   let featuresData: Array<{ id: string; feature_slug: string; feature_name: string; description?: string }> = []
   if (featuresResult.data?.id) {
     const { data: features } = await supabase
       .from('architecture_features')
       .select('id, feature_slug, feature_name, description')
       .eq('snapshot_id', featuresResult.data.id)
-    featuresData = features || []
+    featuresData = (features || []) as typeof featuresData
   }
 
   // Transform tasks to match the Task type (backward compatible)

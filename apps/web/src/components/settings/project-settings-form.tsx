@@ -15,7 +15,13 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { Loader2, Sparkles } from 'lucide-react'
-import type { AIModel, ProjectSettings } from '@/lib/supabase/types'
+
+type AIModel = 'gpt-4o' | 'gpt-4o-mini' | 'gpt-5' | 'o1' | 'o1-mini'
+
+interface ProjectSettings {
+  ai_model?: AIModel
+  [key: string]: unknown
+}
 
 const AI_MODELS: { value: AIModel; label: string; description: string }[] = [
   { value: 'gpt-4o', label: 'GPT-4o', description: 'Fast and efficient' },

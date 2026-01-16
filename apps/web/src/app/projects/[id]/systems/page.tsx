@@ -37,11 +37,13 @@ export default async function SystemsPage({
   }
 
   // Transform to include computed fields
+  // Cast through unknown to handle DB null vs TS undefined mismatch
   const systemsWithCounts = (systems || []).map((system) => {
     const latestSnapshot = system.system_flow_snapshots
       ?.sort((a: { version: number }, b: { version: number }) => b.version - a.version)[0]
 
-    const nodeCount = latestSnapshot?.graph_json?.nodes?.length || 0
+    const graphJson = latestSnapshot?.graph_json as { nodes?: unknown[] } | undefined
+    const nodeCount = graphJson?.nodes?.length || 0
 
     const { system_flow_snapshots, ...systemData } = system
 
@@ -50,7 +52,7 @@ export default async function SystemsPage({
       latest_snapshot: latestSnapshot,
       node_count: nodeCount,
     }
-  })
+  }) as unknown as Parameters<typeof SystemsListView>[0]['systems']
 
   // Fetch project name
   const { data: project } = await supabase

@@ -69,6 +69,25 @@ External service integrations (Supabase, Vercel, OpenAPI) with encrypted credent
 - Unit tests use Vitest
 - Test files are co-located with source files (`.test.ts` suffix)
 
+## Parallel Document Generation
+
+Documentation generation uses 7 parallel Claude Code terminals:
+
+1. **Agents_Summary.md** - Generated first, provides context for others
+2. **Architecture.md** - System design and technologies
+3. **Features.md** - All features in the repo
+4. **APIs.md** - API documentation
+5. **Runbook.md** - Operational guides
+6. **ADRs.md** - Architecture decisions
+7. **Summary.md** - Overall summary
+
+This approach:
+- Uses the user's Claude Code subscription (no API tokens) when bridge connected
+- Falls back to Anthropic API when bridge not available
+- Runs 6 documents in parallel after Agents_Summary completes
+- Prioritizes agents.md files from target repos as primary context
+- Provides granular progress tracking per document
+
 ## Environment Variables
 
 Required in `.env.local`:

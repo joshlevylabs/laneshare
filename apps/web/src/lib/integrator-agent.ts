@@ -203,7 +203,7 @@ export function detectConflicts(edits: EditStreamEntry[]): Map<string, EditStrea
 
   // Filter to only files with multiple edits
   const conflicts = new Map<string, EditStreamEntry[]>()
-  for (const [path, pathEdits] of fileEdits) {
+  for (const [path, pathEdits] of Array.from(fileEdits.entries())) {
     if (pathEdits.length > 1) {
       conflicts.set(path, pathEdits)
     }

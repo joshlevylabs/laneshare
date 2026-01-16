@@ -287,12 +287,13 @@ export class OpenApiAdapter implements ServiceAdapter<OpenApiConfig, OpenApiSecr
 
       // Create security scheme assets
       for (const secScheme of normalized.securitySchemes) {
-        const secKey = `openapi:${slug}:security:${secScheme.name}`
+        const schemeName = secScheme.name || 'unnamed'
+        const secKey = `openapi:${slug}:security:${schemeName}`
 
         assets.push({
           asset_type: 'security_scheme',
           asset_key: secKey,
-          name: secScheme.name,
+          name: schemeName,
           data_json: secScheme as unknown as Record<string, unknown>,
         })
       }
@@ -773,11 +774,8 @@ export class OpenApiAdapter implements ServiceAdapter<OpenApiConfig, OpenApiSecr
 
     return {
       name,
-      type: normalized.type,
+      schema: normalized,
       description: normalized.description,
-      properties: normalized.properties,
-      required: normalized.required,
-      enum: normalized.enum,
     }
   }
 

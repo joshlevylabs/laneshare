@@ -153,7 +153,7 @@ const results = await searchByEmbedding(queryEmbedding, {
 
 ## Claude Code Runner (`claude-code-runner.ts`)
 
-Integration for running Claude Code to generate documentation.
+Legacy integration for running Claude Code to generate documentation via Anthropic API.
 
 ```typescript
 import { ClaudeCodeRunner } from '@/lib/claude-code-runner';
@@ -168,6 +168,54 @@ const docs = await runner.generateDocs({
   context: additionalContext,
 });
 ```
+
+## Doc Generation Orchestrator (`doc-generation-orchestrator.ts`)
+
+Manages parallel document generation using 7 Claude Code terminals.
+
+### Architecture
+
+```
+Phase 1: Context Gathering
+    ↓
+Phase 2: Agents_Summary (sequential)
+    ↓
+Phase 3: 6 Parallel Documents
+    ↓
+Phase 4: Assembly & Storage
+```
+
+### Usage
+
+```typescript
+import { runParallelDocGeneration } from '@/lib/doc-generation-orchestrator';
+
+const result = await runParallelDocGeneration({
+  bundleId,
+  projectId,
+  repoId,
+  userId,
+  connectionId,  // Optional: Active bridge connection
+  sessionId,     // Optional: Workspace session ID
+  supabase,
+  onProgress: (session) => updateUI(session),
+});
+```
+
+### Documents Generated
+
+1. **Agents_Summary.md** - agents.md file overview (runs first)
+2. **Architecture.md** - System architecture
+3. **Features.md** - All features
+4. **APIs.md** - API documentation
+5. **Runbook.md** - Operational guides
+6. **ADRs.md** - Architecture decisions
+7. **Summary.md** - Repository summary
+
+### Execution Modes
+
+- **Bridge Mode**: When `connectionId` provided, executes via Claude Code CLI in user's Codespace
+- **API Mode**: Falls back to Anthropic API when bridge not available
 
 ## Context Provider (`repo-context-provider.ts`)
 

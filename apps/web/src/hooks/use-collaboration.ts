@@ -8,7 +8,7 @@ import type {
   EditStreamEntry,
   MergeEvent,
   EditConflict,
-} from '@laneshare/shared/types/collaborative-editing'
+} from '@laneshare/shared'
 
 export interface UseCollaborationOptions {
   projectId: string

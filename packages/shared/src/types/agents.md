@@ -10,7 +10,8 @@ Core TypeScript type definitions shared across the monorepo. These define the da
 types/
 ├── index.ts           # Main entity types (User, Project, Task, etc.)
 ├── architecture.ts    # Architecture graph types (nodes, edges, features)
-└── system-map.ts      # System/flowchart mapping types
+├── system-map.ts      # System/flowchart mapping types
+└── doc-generation.ts  # Parallel document generation types
 ```
 
 ## Core Entities (index.ts)
@@ -241,6 +242,66 @@ Or with path alias:
 
 ```typescript
 import type { Task } from '@/../../packages/shared/src/types';
+```
+
+## Doc Generation Types (doc-generation.ts)
+
+Types for the parallel document generation system.
+
+### DOC_TYPES
+
+Constant defining all 7 document types with metadata:
+
+```typescript
+const DOC_TYPES = {
+  AGENTS_SUMMARY: { id: 'agents_summary', title: 'Agents Summary', category: 'ARCHITECTURE', isPrerequisite: true },
+  ARCHITECTURE: { id: 'architecture', title: 'Architecture', category: 'ARCHITECTURE' },
+  FEATURES: { id: 'features', title: 'Features', category: 'FEATURE' },
+  APIS: { id: 'apis', title: 'APIs', category: 'API' },
+  RUNBOOK: { id: 'runbook', title: 'Runbook', category: 'RUNBOOK' },
+  ADRS: { id: 'adrs', title: 'Architecture Decision Records', category: 'ARCHITECTURE' },
+  SUMMARY: { id: 'summary', title: 'Summary', category: 'ARCHITECTURE' },
+}
+
+type DocType = keyof typeof DOC_TYPES
+```
+
+### DocGenerationSession
+
+Tracks the overall generation session:
+
+```typescript
+interface DocGenerationSession {
+  bundleId: string
+  jobs: Record<DocType, DocGenerationJob>
+  phase: 'context' | 'agents_summary' | 'parallel' | 'assembly' | 'complete' | 'error'
+  agentsSummaryContent?: string  // Cached for other documents
+}
+```
+
+### DocGenerationJob
+
+Individual document job tracking:
+
+```typescript
+interface DocGenerationJob {
+  docType: DocType
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  startedAt?: string
+  completedAt?: string
+  result?: string  // Markdown content
+  error?: string
+}
+```
+
+### Helper Functions
+
+```typescript
+import { getDocTypesInOrder, initializeDocGenSession, countCompletedJobs } from '@laneshare/shared'
+
+const orderedTypes = getDocTypesInOrder()  // Returns DocType[] in display order
+const session = initializeDocGenSession(bundleId, projectId, repoId)
+const completed = countCompletedJobs(session)  // Returns number
 ```
 
 ## Database Alignment

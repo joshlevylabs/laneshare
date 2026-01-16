@@ -22,7 +22,7 @@ export default async function ReposPage({
   const { data: connection } = await supabase
     .from('github_connections')
     .select('id')
-    .eq('user_id', user?.id)
+    .eq('user_id', user?.id ?? '')
     .single()
 
   // User is connected if they logged in via GitHub OAuth OR have a stored PAT
@@ -36,10 +36,11 @@ export default async function ReposPage({
     .order('installed_at', { ascending: false })
 
   // Transform repos to include has_codespaces_token flag
+  // Cast through unknown to handle DB null vs TS undefined mismatch
   const repos = (reposData || []).map((repo) => ({
     ...repo,
     has_codespaces_token: !!repo.github_token_encrypted,
-  }))
+  })) as unknown as Parameters<typeof ReposList>[0]['repos']
 
   return (
     <div className="space-y-6">

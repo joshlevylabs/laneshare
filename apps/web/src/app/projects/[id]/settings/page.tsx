@@ -54,8 +54,9 @@ export default async function SettingsPage({
           <CardDescription>Update your project's name and description</CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Cast through unknown to handle DB null vs TS undefined mismatch */}
           <ProjectSettingsForm
-            project={project!}
+            project={project as unknown as Parameters<typeof ProjectSettingsForm>[0]['project']}
             isAdmin={isAdmin}
           />
         </CardContent>

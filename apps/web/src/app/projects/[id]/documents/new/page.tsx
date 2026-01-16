@@ -102,8 +102,9 @@ export default async function NewDocumentPage({
       projectId={params.id}
       projectName={project.name}
       userId={user.id}
-      existingSession={existingSession}
-      availableContext={availableContext}
+      // Cast through unknown to handle DB null vs TS undefined mismatch
+      existingSession={existingSession as unknown as import('@laneshare/shared').DocumentBuilderSession | null}
+      availableContext={availableContext as unknown as Parameters<typeof DocumentBuilderWizard>[0]['availableContext']}
     />
   )
 }

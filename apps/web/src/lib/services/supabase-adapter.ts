@@ -194,6 +194,13 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
     secrets: SupabaseSecrets
   ): Promise<ValidationResult> {
     try {
+      if (!secrets.access_token) {
+        return {
+          valid: false,
+          error: 'Access token is required',
+        }
+      }
+
       const projectRef = this.extractProjectRef(config.supabase_url)
       if (!projectRef) {
         return {
@@ -264,6 +271,15 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
     }
 
     try {
+      if (!secrets.access_token) {
+        return {
+          success: false,
+          assets,
+          stats,
+          error: 'Access token is required',
+        }
+      }
+
       const projectRef = this.extractProjectRef(config.supabase_url)
       if (!projectRef) {
         return {
@@ -433,11 +449,13 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
       const tablePks = pkMap.get(tableKey) || []
       const tableFks = fkMap.get(tableKey) || []
 
-      const columnInfos: ColumnInfo[] = tableCols.map((col) => ({
+      const columnInfos: ColumnInfo[] = tableCols.map((col, index) => ({
         name: col.column_name,
-        type: col.udt_name || col.data_type,
-        nullable: col.is_nullable === 'YES',
-        default_value: col.column_default || undefined,
+        data_type: col.udt_name || col.data_type,
+        udt_name: col.udt_name,
+        is_nullable: col.is_nullable === 'YES',
+        column_default: col.column_default || undefined,
+        ordinal_position: col.ordinal_position ?? index + 1,
         is_primary_key: tablePks.includes(col.column_name),
       }))
 
@@ -516,9 +534,10 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
         table_name: policy.table_name,
         schema: policy.schema_name,
         command: policy.command,
-        definition: policy.definition || '',
-        check: policy.with_check || undefined,
+        permissive: true, // Default to permissive
         roles: policy.roles || [],
+        using_expression: policy.definition || undefined,
+        check_expression: policy.with_check || undefined,
       }
 
       assets.push({
@@ -576,8 +595,7 @@ export class SupabaseAdapter implements ServiceAdapter<SupabaseConfig, SupabaseS
         schema: func.schema_name,
         language: func.language,
         return_type: func.return_type,
-        arguments: func.arguments || '',
-        is_trigger: func.is_trigger,
+        argument_types: func.arguments || undefined,
       }
 
       assets.push({

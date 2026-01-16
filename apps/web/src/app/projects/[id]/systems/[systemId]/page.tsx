@@ -56,8 +56,9 @@ export default async function SystemDetailPage({
   return (
     <SystemDetailView
       projectId={params.id}
-      system={system}
-      latestSnapshot={latestSnapshot}
+      // Cast through unknown to handle DB null vs TS undefined mismatch
+      system={system as unknown as Parameters<typeof SystemDetailView>[0]['system']}
+      latestSnapshot={latestSnapshot as unknown as Parameters<typeof SystemDetailView>[0]['latestSnapshot']}
       isAdmin={isAdmin}
     />
   )

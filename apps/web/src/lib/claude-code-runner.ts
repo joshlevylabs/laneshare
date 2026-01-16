@@ -364,7 +364,7 @@ export class ClaudeRunner implements IClaudeRunner {
       }
 
       // Deduplicate warnings
-      const uniqueWarnings = [...new Set(accumulatedWarnings)]
+      const uniqueWarnings = Array.from(new Set(accumulatedWarnings))
 
       const finalOutput: ValidatedClaudeOutput = {
         repo_summary: repoSummary || {
@@ -427,7 +427,7 @@ export class ClaudeRunner implements IClaudeRunner {
       let repoSummary: ValidatedClaudeOutput['repo_summary'] | undefined
 
       // Try to extract repo_summary
-      const summaryMatch = jsonStr.match(/"repo_summary"\s*:\s*(\{[^}]+\})/s)
+      const summaryMatch = jsonStr.match(/"repo_summary"\s*:\s*(\{[^}]+\})/)
       if (summaryMatch) {
         try {
           const summary = JSON.parse(summaryMatch[1])
@@ -442,7 +442,7 @@ export class ClaudeRunner implements IClaudeRunner {
       }
 
       // Try to extract warnings array
-      const warningsMatch = jsonStr.match(/"warnings"\s*:\s*\[((?:[^\[\]]|\[(?:[^\[\]]|\[[^\[\]]*\])*\])*)\]/s)
+      const warningsMatch = jsonStr.match(/"warnings"\s*:\s*\[((?:[^\[\]]|\[(?:[^\[\]]|\[[^\[\]]*\])*\])*)\]/)
       if (warningsMatch) {
         try {
           const parsedWarnings = JSON.parse(`[${warningsMatch[1]}]`)
@@ -456,7 +456,7 @@ export class ClaudeRunner implements IClaudeRunner {
 
       // Find all complete page objects
       // Match pattern: {"category": ..., "slug": ..., "title": ..., "markdown": ..., "evidence": [...]}
-      const pageRegex = /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"slug"\s*:\s*"([^"]+)"\s*,\s*"title"\s*:\s*"([^"]+)"\s*,\s*"markdown"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"evidence"\s*:\s*(\[[^\]]*\])\s*\}/gs
+      const pageRegex = /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"slug"\s*:\s*"([^"]+)"\s*,\s*"title"\s*:\s*"([^"]+)"\s*,\s*"markdown"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"evidence"\s*:\s*(\[[^\]]*\])\s*\}/g
 
       let match
       while ((match = pageRegex.exec(jsonStr)) !== null) {

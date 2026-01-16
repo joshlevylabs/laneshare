@@ -72,9 +72,11 @@ export default async function ServicesPage({
     }
   }
 
-  const supabaseConnection = connections?.find((c) => c.service === 'supabase')
-  const vercelConnection = connections?.find((c) => c.service === 'vercel')
-  const openApiConnections = connections?.filter((c) => c.service === 'openapi') || []
+  // Cast through unknown to handle DB null vs TS undefined mismatch
+  type ServiceConnection = Parameters<typeof ServiceConnectionCard>[0]['connection']
+  const supabaseConnection = connections?.find((c) => c.service === 'supabase') as unknown as ServiceConnection
+  const vercelConnection = connections?.find((c) => c.service === 'vercel') as unknown as ServiceConnection
+  const openApiConnections = (connections?.filter((c) => c.service === 'openapi') || []) as unknown as NonNullable<ServiceConnection>[]
 
   return (
     <div className="space-y-6 max-w-5xl">

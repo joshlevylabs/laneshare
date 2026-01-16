@@ -18,7 +18,8 @@ import {
   AlertCircle,
   Clock,
 } from 'lucide-react'
-import type { ServiceType } from '@/lib/supabase/types'
+
+type ServiceType = 'supabase' | 'vercel' | 'openapi'
 
 interface ServiceConnection {
   id: string

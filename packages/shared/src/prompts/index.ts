@@ -21,6 +21,9 @@ export * from './implementation-agent'
 // Re-export integrator agent prompts (collaborative editing)
 export * from './integrator-agent'
 
+// Re-export parallel doc generation prompts (7-terminal approach)
+export * from './doc-prompts'
+
 export interface LanePilotContext {
   task?: Task
   projectName: string

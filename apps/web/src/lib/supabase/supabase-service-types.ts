@@ -42,6 +42,7 @@ export interface ColumnInfo {
 
 // Foreign key information
 export interface ForeignKeyInfo {
+  column?: string
   references_table: string
   references_column: string
   references_schema?: string
@@ -53,6 +54,7 @@ export interface TableAssetData {
   name: string
   columns?: ColumnInfo[]
   primary_key?: string[]
+  foreign_keys?: ForeignKeyInfo[]
   row_count?: number
   has_rls?: boolean
 }
@@ -109,6 +111,7 @@ export interface VercelSecrets {
 
 // Sync statistics for Vercel connections
 export interface VercelSyncStats {
+  projects: number
   deployments: number
   domains: number
   env_vars: number
@@ -116,12 +119,17 @@ export interface VercelSyncStats {
 
 // Asset data for Vercel project type
 export interface VercelProjectAssetData {
+  id?: string
   name: string
   framework?: string
   node_version?: string
   build_command?: string
   output_directory?: string
   root_directory?: string
+  git_repo?: {
+    repo: string
+    type: string
+  }
   created_at?: string
   updated_at?: string
 }
@@ -129,6 +137,7 @@ export interface VercelProjectAssetData {
 // Asset data for deployment type
 export interface DeploymentAssetData {
   id: string
+  name?: string
   url?: string
   state: string
   ready_state?: string
@@ -142,7 +151,9 @@ export interface DeploymentAssetData {
 // Asset data for domain type
 export interface DomainAssetData {
   name: string
+  project_id?: string
   verified: boolean
+  configured?: boolean
   created_at?: string
   configured_by?: string
 }

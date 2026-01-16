@@ -5,11 +5,23 @@
 
 import type {
   ServiceType,
-  ServiceConfig,
-  ServiceSecrets,
-  ServiceSyncStats,
-  ServiceAssetType,
-} from '@/lib/supabase/types'
+  SupabaseConfig,
+  SupabaseSecrets,
+  SupabaseSyncStats,
+  VercelConfig,
+  VercelSecrets,
+  VercelSyncStats,
+} from '@/lib/supabase/supabase-service-types'
+
+import type { OpenApiConfig, OpenApiSecrets, OpenApiSyncStats } from '@/lib/supabase/openapi-types'
+
+// Generic service types as unions of specific types
+export type ServiceConfig = SupabaseConfig | VercelConfig | OpenApiConfig | Record<string, unknown>
+export type ServiceSecrets = SupabaseSecrets | VercelSecrets | OpenApiSecrets | Record<string, unknown>
+export type ServiceSyncStats = SupabaseSyncStats | VercelSyncStats | OpenApiSyncStats | Record<string, unknown>
+export type ServiceAssetType = 'table' | 'policy' | 'function' | 'trigger' | 'bucket' | 'project' | 'deployment' | 'domain' | 'env_var' | 'endpoint' | 'schema' | 'spec' | 'security_scheme' | string
+
+export type { ServiceType }
 
 /**
  * Result of validating a service connection

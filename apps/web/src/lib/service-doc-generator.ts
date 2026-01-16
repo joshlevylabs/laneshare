@@ -229,10 +229,10 @@ ${data.foreign_keys && data.foreign_keys.length > 0 ? `- **Foreign Keys:** ${dat
 
 | Column | Type | Nullable | Default |
 |--------|------|----------|---------|
-${data.columns
+${(data.columns || [])
   .map(
     (col) =>
-      `| ${col.name}${col.is_primary_key ? ' 🔑' : ''} | ${col.type} | ${col.nullable ? 'Yes' : 'No'} | ${col.default_value || '-'} |`
+      `| ${col.name}${col.is_primary_key ? ' 🔑' : ''} | ${col.data_type} | ${col.is_nullable ? 'Yes' : 'No'} | ${col.column_default || '-'} |`
   )
   .join('\n')}
 
@@ -412,7 +412,7 @@ ${data.git_repo ? `- **Repository:** ${data.git_repo.repo} (${data.git_repo.type
 `
     for (const deployment of deployments.slice(0, 20)) {
       const data = deployment.data_json as unknown as DeploymentAssetData
-      const created = new Date(data.created_at).toLocaleDateString()
+      const created = data.created_at ? new Date(data.created_at).toLocaleDateString() : '-'
       vercelDoc += `| [${data.name}](https://${data.url}) | ${data.state} | ${created} | ${data.target || '-'} |\n`
     }
     vercelDoc += '\n'
@@ -628,8 +628,8 @@ ${specData?.base_url ? `- **Base URL:** \`${specData.base_url}\`` : ''}
 `
     for (const schema of schemas.sort((a, b) => a.name.localeCompare(b.name))) {
       const data = schema.data_json as unknown as OpenApiSchemaAssetData
-      const type = data.type || (data.properties ? 'object' : data.enum ? 'enum' : '-')
-      apiDoc += `| ${data.name} | ${type} | ${data.description?.slice(0, 60) || '-'}${data.description && data.description.length > 60 ? '...' : ''} |\n`
+      const schemaType = data.schema?.type || (data.schema?.properties ? 'object' : data.schema?.enum ? 'enum' : '-')
+      apiDoc += `| ${data.name} | ${schemaType} | ${data.description?.slice(0, 60) || '-'}${data.description && data.description.length > 60 ? '...' : ''} |\n`
     }
     apiDoc += '\n'
   }
@@ -787,16 +787,17 @@ This project uses a PostgreSQL database hosted on Supabase with ${tables.length}
 `
     for (const table of schemaTables) {
       const data = table.data_json
+      const columns = data.columns || []
       doc += `**${data.name}**\n`
 
       // List columns
-      for (const col of data.columns.slice(0, 10)) {
+      for (const col of columns.slice(0, 10)) {
         const pk = col.is_primary_key ? ' 🔑' : ''
-        doc += `  - ${col.name}${pk}: ${col.type}${col.nullable ? '?' : ''}\n`
+        doc += `  - ${col.name}${pk}: ${col.data_type}${col.is_nullable ? '?' : ''}\n`
       }
 
-      if (data.columns.length > 10) {
-        doc += `  - ... and ${data.columns.length - 10} more columns\n`
+      if (columns.length > 10) {
+        doc += `  - ... and ${columns.length - 10} more columns\n`
       }
 
       // List foreign keys
@@ -818,14 +819,15 @@ This project uses a PostgreSQL database hosted on Supabase with ${tables.length}
 
   for (const table of tables) {
     const data = table.data_json
+    const columns = data.columns || []
     doc += `### ${data.schema}.${data.name}
 
 | Column | Type | Nullable | Key | Default |
 |--------|------|----------|-----|---------|
 `
-    for (const col of data.columns) {
+    for (const col of columns) {
       const key = col.is_primary_key ? 'PK' : ''
-      doc += `| ${col.name} | ${col.type} | ${col.nullable ? '✓' : ''} | ${key} | ${col.default_value || ''} |\n`
+      doc += `| ${col.name} | ${col.data_type} | ${col.is_nullable ? '✓' : ''} | ${key} | ${col.column_default || ''} |\n`
     }
 
     if (data.foreign_keys && data.foreign_keys.length > 0) {

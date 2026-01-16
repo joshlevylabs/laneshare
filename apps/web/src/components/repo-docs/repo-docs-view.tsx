@@ -246,7 +246,7 @@ export function RepoDocsView({ projectId, repoId, repo }: RepoDocsViewProps) {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ force }),
+          body: JSON.stringify({ force, mode: 'parallel' }),
         }
       )
 

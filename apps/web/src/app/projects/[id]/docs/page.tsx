@@ -32,9 +32,9 @@ export default async function DocsPage({
   return (
     <DocsViewer
       projectId={params.id}
-      docs={docs || []}
-      decisions={decisions || []}
-      activeDoc={activeDoc || null}
+      docs={(docs || []) as any}
+      decisions={(decisions || []) as any}
+      activeDoc={(activeDoc || null) as any}
     />
   )
 }

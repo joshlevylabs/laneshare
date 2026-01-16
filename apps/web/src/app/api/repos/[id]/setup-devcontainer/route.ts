@@ -17,6 +17,7 @@ interface DevcontainerConfig {
   postCreateCommand?: string
   postStartCommand?: string
   forwardPorts?: number[]
+  portsAttributes?: Record<string, { label?: string; onAutoForward?: string; visibility?: string }>
   containerEnv?: Record<string, string>
   secrets?: Record<string, { description: string }>
   customizations?: {

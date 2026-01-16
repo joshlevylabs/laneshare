@@ -151,7 +151,7 @@ export async function POST(
       tool_input: toolInput || null,
       tool_result: toolResult || null,
       timestamp: timestamp ? new Date(timestamp) : new Date(),
-    })
+    } as any)
     .select()
     .single()
 

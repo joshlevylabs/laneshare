@@ -12,6 +12,9 @@ export * from './agent-implementation'
 // Re-export collaborative editing types
 export * from './collaborative-editing'
 
+// Re-export doc generation types
+export * from './doc-generation'
+
 export type ProjectRole = 'OWNER' | 'MAINTAINER' | 'MEMBER'
 
 export type TaskStatus = 'BACKLOG' | 'TODO' | 'IN_PROGRESS' | 'IN_REVIEW' | 'BLOCKED' | 'DONE'

@@ -19,7 +19,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Loader2, Search, Table2, FileCode, Shield, FunctionSquare, HardDrive, Globe, Rocket, Key, Copy, Check } from 'lucide-react'
-import type { ServiceType } from '@/lib/supabase/types'
+
+type ServiceType = 'supabase' | 'vercel' | 'openapi'
 
 interface Asset {
   id: string

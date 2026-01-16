@@ -8,7 +8,7 @@ export { SupabaseAdapter, createSupabaseAdapter } from './supabase-adapter'
 export { VercelAdapter, createVercelAdapter } from './vercel-adapter'
 export { OpenApiAdapter, createOpenApiAdapter } from './openapi-adapter'
 
-import type { ServiceType } from '@/lib/supabase/types'
+import type { ServiceType } from '@/lib/supabase/supabase-service-types'
 import type { ServiceAdapter } from './types'
 import { SupabaseAdapter } from './supabase-adapter'
 import { VercelAdapter } from './vercel-adapter'

@@ -50,7 +50,8 @@ export default async function ProjectsPage() {
           <CreateProjectDialog />
         </div>
 
-        <ProjectsList projects={projects || []} />
+        {/* Cast through unknown to handle DB null vs TS undefined mismatch */}
+        <ProjectsList projects={(projects || []) as unknown as Parameters<typeof ProjectsList>[0]['projects']} />
       </main>
     </div>
   )
@@ -65,7 +66,7 @@ async function UserNav() {
   const { data: profile } = await supabase
     .from('profiles')
     .select('*')
-    .eq('id', user?.id)
+    .eq('id', user?.id ?? '')
     .single()
 
   return (

@@ -12,7 +12,8 @@ prompts/
 ├── agent-prompts.ts      # LanePilot prompts for coding context
 ├── context-ai.ts         # AI prompts for context suggestions
 ├── doc-generation.ts     # Documentation generation prompts
-└── repo-docs.ts          # Claude Code integration for repo docs
+├── repo-docs.ts          # Claude Code integration for repo docs (legacy)
+└── doc-prompts.ts        # Parallel document generation prompts (7-terminal)
 ```
 
 ## Prompt Categories
@@ -60,13 +61,54 @@ Prompts for generating project documentation.
 
 ### Repository Documentation (`repo-docs.ts`)
 
-For Claude Code integration - generates comprehensive repo documentation bundles.
+For Claude Code integration - generates comprehensive repo documentation bundles (legacy single-call approach).
 
 **Bundle Types:**
 - `ARCHITECTURE` - System architecture overview
 - `API` - API endpoints and usage
 - `FEATURES` - Feature documentation
 - `RUNBOOK` - Operational procedures
+
+### Parallel Document Prompts (`doc-prompts.ts`)
+
+Individual prompts for each of the 7 documentation documents in the parallel generation system.
+
+**Prompt Structure:**
+
+Each prompt includes:
+1. Repository context (file tree, key files)
+2. All discovered agents.md files
+3. Agents_Summary content (for docs 2-7)
+4. Document-specific instructions
+5. Output format requirements
+
+**Document Types:**
+
+| Document | Primary Focus | Key Files Analyzed |
+|----------|--------------|-------------------|
+| Agents_Summary | agents.md inventory | `**/agents.md` |
+| Architecture | System design | config, schema, docker |
+| Features | Functionality | components, pages, routes |
+| APIs | Endpoints | api, route, controller |
+| Runbook | Operations | docker, scripts, workflows |
+| ADRs | Decisions | All (inference-based) |
+| Summary | Overview | README, package.json |
+
+**Usage:**
+
+```typescript
+import { buildDocPrompt } from '@laneshare/shared/prompts';
+import type { DocType, DocPromptContext } from '@laneshare/shared';
+
+const prompt = buildDocPrompt('ARCHITECTURE', {
+  repoName: 'my-repo',
+  repoOwner: 'owner',
+  fileTree: '...',
+  agentsMdFiles: [...],
+  keyFiles: [...],
+  agentsSummary: '...', // Output from AGENTS_SUMMARY (for docs 2-7)
+});
+```
 
 ## Prompt Engineering Patterns
 

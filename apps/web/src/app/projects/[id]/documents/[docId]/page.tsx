@@ -112,18 +112,19 @@ export default async function DocumentPage({
     .single()
 
   // Transform document to extract first creator/updater from arrays
+  // Cast through unknown to handle DB null vs TS undefined mismatch
   const docWithUsers = {
     ...document,
     creator: Array.isArray(document.creator) ? document.creator[0] : document.creator,
     updater: Array.isArray(document.updater) ? document.updater[0] : document.updater,
-  }
+  } as unknown as Parameters<typeof DocumentDetailView>[0]['document']
 
   return (
     <DocumentDetailView
       projectId={params.id}
       projectName={project?.name || 'Project'}
       document={docWithUsers}
-      references={referencesWithSources}
+      references={referencesWithSources as unknown as Parameters<typeof DocumentDetailView>[0]['references']}
       userRole={membership.role}
       userId={user.id}
     />

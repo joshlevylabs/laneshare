@@ -212,11 +212,11 @@ async function syncRepository(
         embedding: embeddings[idx],
       }))
 
-      await supabase.from('chunks').insert(chunksWithEmbeddings)
+      await supabase.from('chunks').insert(chunksWithEmbeddings as any)
     } catch (error) {
       console.error('Error generating embeddings:', error)
       // Insert chunks without embeddings as fallback
-      await supabase.from('chunks').insert(batch)
+      await supabase.from('chunks').insert(batch as any)
     }
   }
 

@@ -9,7 +9,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { ImplementationStatusResponse } from '@laneshare/shared'
 
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: { id: string; taskId: string } }
 ) {
   const projectId = params.id
@@ -89,15 +89,17 @@ export async function GET(
       .eq('session_id', session.id)
       .order('created_at', { ascending: false })
 
-    const response: ImplementationStatusResponse = {
+    // Cast through unknown to handle DB null vs TS undefined mismatch
+    const response = {
       session: {
         ...session,
-        iterations: (iterations || []) as any, // DB nulls vs TS undefined
+        stage: session.stage ?? 'INITIALIZING',
+        iterations: iterations ?? [],
       },
-      currentIteration,
-      fileOperations: fileOperations || [],
-      feedback: feedback || [],
-    }
+      currentIteration: currentIteration ?? undefined,
+      fileOperations: fileOperations ?? [],
+      feedback: feedback ?? [],
+    } as unknown as ImplementationStatusResponse
 
     return NextResponse.json(response)
   } catch (error) {

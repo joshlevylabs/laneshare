@@ -68,9 +68,17 @@ export class VercelAdapter implements ServiceAdapter<VercelConfig, VercelSecrets
     config: VercelConfig,
     secrets: VercelSecrets
   ): Promise<ValidationResult> {
+    const token = secrets.token || secrets.access_token
+    if (!token) {
+      return {
+        valid: false,
+        error: 'Vercel token is required',
+      }
+    }
+
     try {
       // Verify token by fetching user info
-      const response = await this.fetch('/v2/user', secrets.token)
+      const response = await this.fetch('/v2/user', token)
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -90,7 +98,7 @@ export class VercelAdapter implements ServiceAdapter<VercelConfig, VercelSecrets
 
       // If team_id is specified, verify access to that team
       if (config.team_id) {
-        const teamResponse = await this.fetch(`/v2/teams/${config.team_id}`, secrets.token)
+        const teamResponse = await this.fetch(`/v2/teams/${config.team_id}`, token)
         if (!teamResponse.ok) {
           return {
             valid: false,
@@ -131,9 +139,19 @@ export class VercelAdapter implements ServiceAdapter<VercelConfig, VercelSecrets
       env_vars: 0,
     }
 
+    const token = secrets.token || secrets.access_token
+    if (!token) {
+      return {
+        success: false,
+        assets,
+        stats,
+        error: 'Vercel token is required',
+      }
+    }
+
     try {
       // Fetch projects
-      const projects = await this.fetchProjects(secrets.token, config.team_id, config.project_ids)
+      const projects = await this.fetchProjects(token, config.team_id, config.project_ids)
       stats.projects = projects.length
 
       for (const project of projects) {
@@ -159,7 +177,7 @@ export class VercelAdapter implements ServiceAdapter<VercelConfig, VercelSecrets
 
         // Fetch deployments for this project
         const deployments = await this.fetchDeployments(
-          secrets.token,
+          token,
           project.id,
           config.team_id
         )
@@ -167,13 +185,12 @@ export class VercelAdapter implements ServiceAdapter<VercelConfig, VercelSecrets
 
         for (const deployment of deployments) {
           const deploymentData: DeploymentAssetData = {
-            uid: deployment.uid,
+            id: deployment.uid,
             name: deployment.name,
             url: deployment.url,
             state: deployment.state,
             created_at: new Date(deployment.created).toISOString(),
-            ready_at: deployment.ready ? new Date(deployment.ready).toISOString() : undefined,
-            source: deployment.source,
+            ready: deployment.ready ? new Date(deployment.ready).toISOString() : undefined,
             target: deployment.target,
           }
 
@@ -186,7 +203,7 @@ export class VercelAdapter implements ServiceAdapter<VercelConfig, VercelSecrets
         }
 
         // Fetch domains for this project
-        const domains = await this.fetchDomains(secrets.token, project.id, config.team_id)
+        const domains = await this.fetchDomains(token, project.id, config.team_id)
         stats.domains += domains.length
 
         for (const domain of domains) {
@@ -206,7 +223,7 @@ export class VercelAdapter implements ServiceAdapter<VercelConfig, VercelSecrets
         }
 
         // Fetch env vars for this project (names only!)
-        const envVars = await this.fetchEnvVars(secrets.token, project.id, config.team_id)
+        const envVars = await this.fetchEnvVars(token, project.id, config.team_id)
         stats.env_vars += envVars.length
 
         for (const envVar of envVars) {

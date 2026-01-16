@@ -67,7 +67,7 @@ export async function GET(
 
   // Apply filters
   if (status) {
-    query = query.eq('status', status)
+    query = query.eq('status', status as any)
   }
 
   if (assigneeId === 'null') {
@@ -77,7 +77,7 @@ export async function GET(
   }
 
   if (type) {
-    query = query.eq('type', type)
+    query = query.eq('type', type as any)
   }
 
   if (sprintId === 'null') {
@@ -156,7 +156,7 @@ export async function POST(
 
   const { data: task, error } = await supabase
     .from('tasks')
-    .insert(insertData)
+    .insert(insertData as any)
     .select(`
       *,
       assignee:profiles!assignee_id(id, email, full_name, avatar_url)

@@ -6,6 +6,7 @@ const updateSessionSchema = z.object({
   status: z.enum(['CONNECTING', 'CONNECTED', 'DISCONNECTED', 'ERROR']).optional(),
   localSessionId: z.string().optional(),
   errorMessage: z.string().optional(),
+  lastActivityAt: z.string().datetime().optional(),
   connectionConfig: z.object({
     serverUrl: z.string().url(),
     projectPath: z.string().optional(),
@@ -110,6 +111,7 @@ export async function PATCH(
   if (result.data.status) updateData.status = result.data.status
   if (result.data.localSessionId !== undefined) updateData.local_session_id = result.data.localSessionId
   if (result.data.errorMessage !== undefined) updateData.error_message = result.data.errorMessage
+  if (result.data.lastActivityAt) updateData.last_activity_at = result.data.lastActivityAt
   if (result.data.connectionConfig) updateData.connection_config = result.data.connectionConfig
 
   const { data: session, error } = await supabase

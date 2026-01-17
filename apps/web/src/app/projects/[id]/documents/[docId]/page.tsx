@@ -45,6 +45,19 @@ export default async function DocumentPage({
       created_at,
       updated_by,
       updated_at,
+      source_repo_id,
+      source_bundle_id,
+      source_repo_page_id,
+      evidence_json,
+      original_markdown,
+      verification_score,
+      verification_issues,
+      needs_review,
+      reviewed,
+      reviewed_at,
+      reviewed_by,
+      user_edited,
+      user_edited_at,
       creator:profiles!documents_created_by_fkey (
         id,
         email,
@@ -56,6 +69,11 @@ export default async function DocumentPage({
         email,
         full_name,
         avatar_url
+      ),
+      source_repo:repos!documents_source_repo_id_fkey (
+        id,
+        owner,
+        name
       )
     `)
     .eq('id', params.docId)
@@ -111,19 +129,22 @@ export default async function DocumentPage({
     .eq('id', params.id)
     .single()
 
-  // Transform document to extract first creator/updater from arrays
+  // Transform document to extract first creator/updater/source_repo from arrays
   // Cast through unknown to handle DB null vs TS undefined mismatch
-  const docWithUsers = {
+  const docWithJoins = {
     ...document,
     creator: Array.isArray(document.creator) ? document.creator[0] : document.creator,
     updater: Array.isArray(document.updater) ? document.updater[0] : document.updater,
+    source_repo: Array.isArray((document as any).source_repo)
+      ? (document as any).source_repo[0]
+      : (document as any).source_repo,
   } as unknown as Parameters<typeof DocumentDetailView>[0]['document']
 
   return (
     <DocumentDetailView
       projectId={params.id}
       projectName={project?.name || 'Project'}
-      document={docWithUsers}
+      document={docWithJoins}
       references={referencesWithSources as unknown as Parameters<typeof DocumentDetailView>[0]['references']}
       userRole={membership.role}
       userId={user.id}

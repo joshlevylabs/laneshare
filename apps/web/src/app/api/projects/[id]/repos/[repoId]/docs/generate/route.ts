@@ -56,10 +56,12 @@ type DocGenProgress = LegacyDocGenProgress | ParallelDocGenProgress
 
 const GenerateRequestSchema = z.object({
   force: z.boolean().optional().default(false),
-  mode: z.enum(['legacy', 'parallel']).optional().default('legacy'),
-  // For parallel mode with bridge connection
+  mode: z.enum(['legacy', 'parallel']).optional().default('parallel'),
+  // For parallel mode with bridge connection (auto-detected if not provided)
   connectionId: z.string().uuid().optional(),
   sessionId: z.string().uuid().optional(),
+  // Allow API fallback if no bridge available (default: false - requires Codespace)
+  allowApiFallback: z.boolean().optional().default(false),
 })
 
 // Reduced from 3 to 2 - with improved file selection (critical files first),
@@ -99,7 +101,51 @@ export async function POST(
 
     // Parse request body
     const body = await request.json().catch(() => ({}))
-    const { force, mode, connectionId, sessionId } = GenerateRequestSchema.parse(body)
+    const { force, mode, connectionId: providedConnectionId, sessionId: providedSessionId, allowApiFallback } = GenerateRequestSchema.parse(body)
+
+    // Auto-detect active bridge connection if not provided
+    let connectionId = providedConnectionId
+    let sessionId = providedSessionId
+
+    if (!connectionId || !sessionId) {
+      // Try to find an active workspace session with bridge connected
+      const { data: activeSession } = await serviceClient
+        .from('workspace_sessions')
+        .select(`
+          id,
+          bridge_connections!inner (
+            id,
+            status
+          )
+        `)
+        .eq('project_id', projectId)
+        .eq('status', 'CONNECTED')
+        .eq('bridge_connected', true)
+        .order('last_activity_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (activeSession) {
+        sessionId = activeSession.id
+        const bridgeConn = Array.isArray(activeSession.bridge_connections)
+          ? activeSession.bridge_connections[0]
+          : activeSession.bridge_connections
+        if (bridgeConn && bridgeConn.status === 'CONNECTED') {
+          connectionId = bridgeConn.id
+          console.log(`[DocGen] Auto-detected bridge connection: session=${sessionId}, connection=${connectionId}`)
+        }
+      }
+    }
+
+    // For parallel mode, require bridge connection unless API fallback is allowed
+    if (mode === 'parallel' && (!connectionId || !sessionId) && !allowApiFallback) {
+      return NextResponse.json({
+        error: 'Claude Code headless mode requires an active Codespace connection',
+        details: 'Please start a Codespace from the Workspace page and ensure Claude Code is running. ' +
+                 'Alternatively, you can use the Regenerate button with API fallback enabled.',
+        needsCodespace: true,
+      }, { status: 400 })
+    }
 
     // Get repo info
     const { data: repo, error: repoError } = await supabase
@@ -191,7 +237,8 @@ export async function POST(
 
     // Start generation in background based on mode
     if (mode === 'parallel') {
-      console.log(`[DocGen] Starting PARALLEL generation for bundle ${bundle.id}`)
+      const hasBridge = connectionId && sessionId
+      console.log(`[DocGen] Starting PARALLEL generation for bundle ${bundle.id} (bridge: ${hasBridge ? 'yes' : 'no'}, allowApiFallback: ${allowApiFallback})`)
       runParallelDocGeneration({
         bundleId: bundle.id,
         projectId,
@@ -200,11 +247,24 @@ export async function POST(
         connectionId,
         sessionId,
         supabase: serviceClient,
+        allowApiFallback,
         onProgress: (session) => {
           console.log(`[DocGen] Parallel progress: ${session.phase}, ${Object.values(session.jobs).filter(j => j.status === 'completed').length}/7 completed`)
         },
-      }).catch(error => {
+      }).catch(async (error) => {
         console.error('[DocGen] Parallel generation failed:', error)
+        // Update bundle status on failure
+        await serviceClient
+          .from('repo_doc_bundles')
+          .update({
+            status: 'ERROR',
+            error: error instanceof Error ? error.message : 'Generation failed',
+          })
+          .eq('id', bundle.id)
+        await serviceClient
+          .from('repos')
+          .update({ doc_status: 'ERROR' })
+          .eq('id', repoId)
       })
     } else {
       console.log(`[DocGen] Starting LEGACY generation for bundle ${bundle.id}`)

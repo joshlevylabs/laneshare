@@ -37,14 +37,15 @@ export interface OrchestratorOptions {
   projectId: string
   repoId: string
   userId: string
-  connectionId?: string  // Bridge connection (optional - will use API if not available)
-  sessionId?: string     // Workspace session
+  connectionId?: string  // Bridge connection ID from workspace session
+  sessionId?: string     // Workspace session ID
   supabase: SupabaseClient
   onProgress?: (session: DocGenerationSession) => void
   // Timeout per document (default 4 minutes)
   documentTimeoutMs?: number
-  // Whether to use bridge connection (default: true if connectionId provided)
-  useBridge?: boolean
+  // Whether to allow API fallback when bridge is not available (default: false)
+  // When false (default), requires an active Codespace with Claude Code running
+  allowApiFallback?: boolean
 }
 
 export interface OrchestratorResult {
@@ -293,17 +294,23 @@ export class DocGenerationOrchestrator {
   }
 
   /**
-   * Phase 3: Generate 6 documents in parallel
+   * Phase 3: Generate 6 documents in parallel (with staggered start to avoid rate limits)
+   *
+   * Rate limit is 30k tokens/minute. Each prompt is ~15-20k tokens.
+   * So we stagger starts by 30 seconds to avoid hitting the limit.
    */
   private async generateParallelDocuments(): Promise<void> {
     this.session.phase = 'parallel'
     await this.emitProgress()
 
-    console.log('[DocOrchestrator] Starting parallel document generation...')
+    console.log('[DocOrchestrator] Starting parallel document generation (staggered to avoid rate limits)...')
 
-    // Launch all 6 terminals in parallel
-    const promises = PARALLEL_DOC_TYPES.map(docType =>
-      this.generateDocument(docType)
+    // Stagger delay between starting each document (30 seconds)
+    const STAGGER_DELAY_MS = 30 * 1000
+
+    // Launch documents with staggered starts
+    const promises = PARALLEL_DOC_TYPES.map((docType, index) =>
+      this.generateDocumentWithDelay(docType, index * STAGGER_DELAY_MS)
     )
 
     // Wait for all to complete (success or failure)
@@ -311,6 +318,17 @@ export class DocGenerationOrchestrator {
 
     console.log('[DocOrchestrator] Parallel generation complete')
     console.log(`[DocOrchestrator] Completed: ${countCompletedJobs(this.session)}, Failed: ${countFailedJobs(this.session)}`)
+  }
+
+  /**
+   * Generate a document with an initial delay
+   */
+  private async generateDocumentWithDelay(docType: DocType, delayMs: number): Promise<void> {
+    if (delayMs > 0) {
+      console.log(`[DocOrchestrator] ${DOC_TYPES[docType].title} will start in ${delayMs / 1000}s...`)
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+    return this.generateDocument(docType)
   }
 
   /**
@@ -348,17 +366,23 @@ export class DocGenerationOrchestrator {
   }
 
   /**
-   * Execute a prompt - uses bridge if available, otherwise falls back to API
+   * Execute a prompt - requires bridge connection by default (Claude Code in Codespace)
+   * Falls back to API only if allowApiFallback is explicitly true
    */
   private async executePrompt(prompt: string, docType: DocType): Promise<string> {
-    const useBridge = this.options.useBridge !== false &&
-                      this.options.connectionId &&
-                      this.options.sessionId
+    const hasBridge = this.options.connectionId && this.options.sessionId
+    const allowApiFallback = this.options.allowApiFallback === true
 
-    if (useBridge) {
+    if (hasBridge) {
       return this.executeViaBridge(prompt, docType)
-    } else {
+    } else if (allowApiFallback) {
+      console.log(`[DocOrchestrator] No bridge connection, using API fallback for ${docType}`)
       return this.executeViaApi(prompt, docType)
+    } else {
+      throw new Error(
+        'Claude Code headless mode requires an active Codespace connection. ' +
+        'Please start a Codespace from the Workspace page and ensure Claude Code is running.'
+      )
     }
   }
 
@@ -442,9 +466,13 @@ export class DocGenerationOrchestrator {
 
   /**
    * Execute prompt via Anthropic API (fallback when bridge not available)
+   * Includes retry logic for rate limit errors (429)
    */
-  private async executeViaApi(prompt: string, docType: DocType): Promise<string> {
-    console.log(`[DocOrchestrator] Executing ${docType} via API...`)
+  private async executeViaApi(prompt: string, docType: DocType, retryCount = 0): Promise<string> {
+    const MAX_RETRIES = 3
+    const BASE_RETRY_DELAY_MS = 35 * 1000 // 35 seconds (rate limit resets in ~30s)
+
+    console.log(`[DocOrchestrator] Executing ${docType} via API...${retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''}`)
 
     // Import Anthropic client
     const Anthropic = (await import('@anthropic-ai/sdk')).default
@@ -456,25 +484,65 @@ export class DocGenerationOrchestrator {
 
     const systemPrompt = `You are analyzing a code repository to generate documentation. Follow the instructions exactly and return ONLY the markdown content requested. Do not include any explanatory text or code blocks around the output.`
 
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8000,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    })
+    try {
+      const response = await client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8000,
+        system: systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      })
 
-    // Extract text from response
-    const content = response.content[0]
-    if (content.type !== 'text') {
-      throw new Error('Unexpected response type from Claude API')
+      // Extract text from response
+      const content = response.content[0]
+      if (content.type !== 'text') {
+        throw new Error('Unexpected response type from Claude API')
+      }
+
+      return content.text
+    } catch (error: unknown) {
+      // Check for rate limit error and retry
+      const isRateLimitError = error instanceof Error &&
+        'status' in error &&
+        (error as { status?: number }).status === 429
+
+      if (isRateLimitError && retryCount < MAX_RETRIES) {
+        // Get retry-after from headers if available, otherwise use base delay
+        let retryAfterMs = BASE_RETRY_DELAY_MS * (retryCount + 1)
+
+        if ('headers' in error) {
+          const headers = (error as { headers?: Record<string, string> }).headers
+          const retryAfter = headers?.['retry-after']
+          if (retryAfter) {
+            retryAfterMs = (parseInt(retryAfter, 10) + 5) * 1000 // Add 5s buffer
+          }
+        }
+
+        console.log(`[DocOrchestrator] Rate limited for ${docType}, retrying in ${Math.round(retryAfterMs / 1000)}s...`)
+        await new Promise(resolve => setTimeout(resolve, retryAfterMs))
+
+        return this.executeViaApi(prompt, docType, retryCount + 1)
+      }
+
+      throw error
     }
+  }
 
-    return content.text
+  /**
+   * Map DOC_TYPES category to document_category enum
+   */
+  private mapToDocumentCategory(docCategory: string): string {
+    const mapping: Record<string, string> = {
+      'ARCHITECTURE': 'architecture',
+      'API': 'api',
+      'FEATURE': 'feature_guide',
+      'RUNBOOK': 'runbook',
+    }
+    return mapping[docCategory] || 'other'
   }
 
   /**
@@ -486,7 +554,8 @@ export class DocGenerationOrchestrator {
 
     console.log('[DocOrchestrator] Assembling and storing results...')
 
-    const { supabase, bundleId, projectId, repoId } = this.options
+    const { supabase, bundleId, projectId, repoId, userId } = this.options
+    const repoName = this.context?.repoName || 'unknown'
 
     // Build pages from completed jobs
     const pagesToInsert = Object.entries(this.session.jobs)
@@ -509,19 +578,26 @@ export class DocGenerationOrchestrator {
         }
       })
 
-    console.log(`[DocOrchestrator] Inserting ${pagesToInsert.length} pages...`)
+    console.log(`[DocOrchestrator] Inserting ${pagesToInsert.length} pages to repo_doc_pages...`)
 
-    // Batch insert all pages
+    // Batch insert all pages to repo_doc_pages
+    let insertedPages: Array<{ id: string; slug: string; category: string }> = []
     if (pagesToInsert.length > 0) {
-      const { error: pagesError } = await supabase
+      const { data: pagesData, error: pagesError } = await supabase
         .from('repo_doc_pages')
         .insert(pagesToInsert)
+        .select('id, slug, category')
 
       if (pagesError) {
         console.error('[DocOrchestrator] Failed to insert pages:', pagesError)
         throw new Error(`Failed to store documentation: ${pagesError.message}`)
       }
+      insertedPages = pagesData || []
     }
+
+    // Auto-sync to documents table
+    console.log(`[DocOrchestrator] Syncing ${pagesToInsert.length} pages to documents table...`)
+    await this.syncToDocuments(pagesToInsert, insertedPages, repoName, userId)
 
     // Calculate summary
     const pagesByCategory: Record<string, number> = {}
@@ -560,6 +636,119 @@ export class DocGenerationOrchestrator {
       .eq('id', repoId)
 
     console.log(`[DocOrchestrator] Assembly complete. Status: ${finalStatus}`)
+  }
+
+  /**
+   * Sync generated pages to the documents table for unified viewing
+   */
+  private async syncToDocuments(
+    pages: Array<{
+      category: string
+      slug: string
+      title: string
+      markdown: string
+      original_markdown: string
+      evidence_json: Json
+      verification_score: number
+      verification_issues: Json
+    }>,
+    insertedPages: Array<{ id: string; slug: string; category: string }>,
+    repoName: string,
+    userId: string
+  ): Promise<void> {
+    const { supabase, projectId, repoId, bundleId } = this.options
+
+    for (const page of pages) {
+      // Find the corresponding inserted page to get its ID
+      const insertedPage = insertedPages.find(p => p.slug === page.slug)
+
+      // Build document slug: {repoName}-{docType}
+      const docSlug = `${repoName.toLowerCase()}-${page.slug.split('/').pop()}`
+
+      // Build document title: {repoName}/{docTitle}
+      const docTitle = `${repoName}/${page.title}`
+
+      // Map category to document_category enum
+      const docCategory = this.mapToDocumentCategory(page.category)
+
+      // Check if document with this slug already exists
+      const { data: existingDoc } = await supabase
+        .from('documents')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('slug', docSlug)
+        .single()
+
+      if (existingDoc) {
+        // Update existing document
+        const updateData = {
+          title: docTitle,
+          markdown: page.markdown,
+          original_markdown: page.original_markdown,
+          evidence_json: page.evidence_json,
+          verification_score: page.verification_score,
+          verification_issues: page.verification_issues,
+          source_repo_id: repoId,
+          source_bundle_id: bundleId,
+          source_repo_page_id: insertedPage?.id || null,
+          needs_review: true,
+          reviewed: false,
+          reviewed_at: null,
+          reviewed_by: null,
+          user_edited: false,
+          user_edited_at: null,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        }
+        console.log(`[DocOrchestrator] Updating document ${docSlug} with data:`, JSON.stringify(updateData, null, 2))
+
+        const { error: updateError } = await supabase
+          .from('documents')
+          .update(updateData)
+          .eq('id', existingDoc.id)
+
+        if (updateError) {
+          console.error(`[DocOrchestrator] Failed to update document ${docSlug}:`, updateError.message, updateError.code, updateError.details, updateError.hint)
+        } else {
+          console.log(`[DocOrchestrator] Updated document: ${docSlug}`)
+        }
+      } else {
+        // Create new document
+        const insertData = {
+          project_id: projectId,
+          title: docTitle,
+          slug: docSlug,
+          category: docCategory,
+          description: `Auto-generated documentation from ${repoName}`,
+          tags: ['auto-generated', repoName],
+          markdown: page.markdown,
+          original_markdown: page.original_markdown,
+          evidence_json: page.evidence_json,
+          verification_score: page.verification_score,
+          verification_issues: page.verification_issues,
+          source_repo_id: repoId,
+          source_bundle_id: bundleId,
+          source_repo_page_id: insertedPage?.id || null,
+          needs_review: true,
+          reviewed: false,
+          user_edited: false,
+          created_by: userId,
+        }
+        console.log(`[DocOrchestrator] Inserting document ${docSlug} with data:`, JSON.stringify(insertData, null, 2))
+
+        const { error: insertError } = await supabase
+          .from('documents')
+          .insert(insertData)
+
+        if (insertError) {
+          console.error(`[DocOrchestrator] Failed to create document ${docSlug}:`, insertError.message, insertError.code, insertError.details, insertError.hint)
+        } else {
+          console.log(`[DocOrchestrator] Created document: ${docSlug}`)
+        }
+      }
+    }
+
+    console.log(`[DocOrchestrator] Synced ${pages.length} documents`)
   }
 
   /**

@@ -20,6 +20,10 @@ const updateDocumentSchema = z.object({
   description: z.string().max(2000).optional().nullable(),
   tags: z.array(z.string().max(50)).max(20).optional(),
   markdown: z.string().optional(),
+  // Review-related fields
+  reviewed: z.boolean().optional(),
+  user_edited: z.boolean().optional(),
+  verification_score: z.number().min(0).max(100).optional(),
 })
 
 // GET /api/projects/[id]/documents/[docId] - Get a single document
@@ -149,6 +153,29 @@ export async function PATCH(
   if (result.data.description !== undefined) updateData.description = result.data.description
   if (result.data.tags !== undefined) updateData.tags = result.data.tags
   if (result.data.markdown !== undefined) updateData.markdown = result.data.markdown
+
+  // Handle review-related fields
+  if (result.data.reviewed !== undefined) {
+    updateData.reviewed = result.data.reviewed
+    if (result.data.reviewed) {
+      updateData.reviewed_at = new Date().toISOString()
+      updateData.reviewed_by = user.id
+    } else {
+      updateData.reviewed_at = null
+      updateData.reviewed_by = null
+    }
+  }
+
+  if (result.data.user_edited !== undefined) {
+    updateData.user_edited = result.data.user_edited
+    if (result.data.user_edited) {
+      updateData.user_edited_at = new Date().toISOString()
+    }
+  }
+
+  if (result.data.verification_score !== undefined) {
+    updateData.verification_score = result.data.verification_score
+  }
 
   // Update document
   const { data: document, error } = await serviceClient

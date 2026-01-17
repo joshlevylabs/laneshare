@@ -1,11 +1,15 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useToast } from '@/hooks/use-toast'
+import { useDbSession } from '@/hooks/use-db-session'
+import { useOrchestratorEvents } from '@/hooks/use-orchestrator-events'
 import { WorkspaceTabs, type WorkspaceTab } from './workspace-tabs'
 import { WorkspaceTerminal } from './workspace-terminal'
 import { WorkspaceOrchestrator } from './workspace-orchestrator'
 import { WorkspaceConnectionSetup } from './workspace-connection-setup'
+import { ConflictNotification } from './conflict-notification'
+import { CrossSessionPanel } from './cross-session-panel'
 import { Cloud, Terminal, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Task } from '@laneshare/shared'
@@ -63,8 +67,65 @@ export function WorkspaceView({
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [showConnectionSetup, setShowConnectionSetup] = useState(false)
   const [orchestratorExpanded, setOrchestratorExpanded] = useState(false)
+  const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set())
 
   const activeTab = tabs.find((t) => t.id === activeTabId)
+
+  // Database session for the active tab
+  const {
+    session: dbSession,
+    sessionId,
+    isLoading: sessionLoading,
+  } = useDbSession({
+    projectId,
+    codespaceName: activeTab?.codespace?.name,
+    repoId: activeTab?.repoId,
+    enabled: !!activeTab,
+  })
+
+  // Orchestrator events (file conflicts, cross-session messages)
+  const {
+    isConnected: eventsConnected,
+    conflicts: rawConflicts,
+    pendingRequests,
+    clearConflict,
+    respondToRequest,
+    reportFileActivity,
+  } = useOrchestratorEvents({
+    projectId,
+    sessionId,
+    enabled: !!sessionId,
+    onFileConflict: (conflict) => {
+      toast({
+        title: 'File Conflict Detected',
+        description: `${conflict.filePath} is being edited by another team member`,
+        variant: 'destructive',
+      })
+    },
+    onCrossSessionRequest: (request) => {
+      toast({
+        title: 'Cross-Session Request',
+        description: `${request.sourceSession.userName} sent you a ${request.messageType}`,
+      })
+    },
+  })
+
+  // Filter out dismissed conflicts
+  const conflicts = useMemo(
+    () => rawConflicts.filter((c) => !dismissedConflicts.has(c.filePath)),
+    [rawConflicts, dismissedConflicts]
+  )
+
+  const handleDismissConflict = useCallback((filePath: string) => {
+    setDismissedConflicts((prev) => new Set([...Array.from(prev), filePath]))
+    clearConflict(filePath)
+  }, [clearConflict])
+
+  const handleDismissAllConflicts = useCallback(() => {
+    const allPaths = conflicts.map((c) => c.filePath)
+    setDismissedConflicts((prev) => new Set([...Array.from(prev), ...allPaths]))
+    allPaths.forEach((path) => clearConflict(path))
+  }, [conflicts, clearConflict])
 
   // Poll for codespace status updates
   const pollCodespaceStatus = useCallback(async () => {
@@ -192,21 +253,46 @@ export function WorkspaceView({
         onAddTab={() => setShowConnectionSetup(true)}
       />
 
-      {/* Main content - embedded terminal */}
-      <div className="flex-1 min-h-0 p-4">
-        {activeTab ? (
-          <WorkspaceTerminal
-            codespaceUrl={activeTab.codespace.web_url}
-            codespaceName={activeTab.codespace.name}
-            repoName={`${activeTab.repoOwner}/${activeTab.repoName}`}
-            repoId={activeTab.repoId}
-            isActive={activeTab.codespace.state === 'Available'}
+      {/* Conflict notifications */}
+      {conflicts.length > 0 && (
+        <div className="px-4 pt-2">
+          <ConflictNotification
+            conflicts={conflicts}
+            onDismiss={handleDismissConflict}
+            onDismissAll={handleDismissAllConflicts}
           />
-        ) : tabs.length > 0 ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            <p>Select a tab to view the terminal</p>
+        </div>
+      )}
+
+      {/* Main content area */}
+      <div className="flex-1 min-h-0 flex">
+        {/* Terminal panel */}
+        <div className="flex-1 p-4">
+          {activeTab ? (
+            <WorkspaceTerminal
+              codespaceUrl={activeTab.codespace.web_url}
+              codespaceName={activeTab.codespace.name}
+              repoName={`${activeTab.repoOwner}/${activeTab.repoName}`}
+              repoId={activeTab.repoId}
+              isActive={activeTab.codespace.state === 'Available'}
+            />
+          ) : tabs.length > 0 ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              <p>Select a tab to view the terminal</p>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Cross-session panel (right side) */}
+        {pendingRequests.length > 0 && (
+          <div className="w-80 border-l p-4">
+            <CrossSessionPanel
+              pendingRequests={pendingRequests}
+              onRespond={respondToRequest}
+              isConnected={eventsConnected}
+            />
           </div>
-        ) : null}
+        )}
       </div>
 
       {/* Orchestrator panel */}

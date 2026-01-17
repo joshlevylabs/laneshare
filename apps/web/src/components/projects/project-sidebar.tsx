@@ -13,6 +13,7 @@ import {
   Boxes,
   Plug,
   Terminal,
+  Sparkles,
 } from 'lucide-react'
 
 interface ProjectSidebarProps {
@@ -29,6 +30,11 @@ const navItems = [
     title: 'Tasks',
     href: '/tasks',
     icon: ListTodo,
+  },
+  {
+    title: 'Sidequests',
+    href: '/sidequests',
+    icon: Sparkles,
   },
   {
     title: 'Workspace',

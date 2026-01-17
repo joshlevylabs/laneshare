@@ -31,6 +31,13 @@ interface WorkspaceTerminalProps {
   repoId?: string
   onClose?: () => void
   isActive?: boolean
+  // Automation callbacks
+  onTerminalConnected?: () => void
+  onClaudeReady?: () => void
+  // Auto-task: when Claude is ready, send this task automatically
+  initialTask?: string
+  // Expose sendChatMessage for external control
+  sendChatMessageRef?: React.MutableRefObject<((message: string) => void) | null>
 }
 
 type ViewMode = 'terminal' | 'instructions' | 'chat'
@@ -42,6 +49,10 @@ export function WorkspaceTerminal({
   repoId,
   onClose,
   isActive = true,
+  onTerminalConnected,
+  onClaudeReady,
+  initialTask,
+  sendChatMessageRef,
 }: WorkspaceTerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<any>(null)
@@ -92,6 +103,11 @@ export function WorkspaceTerminal({
   // Refs to avoid stale closures in WebSocket handler
   const isChatLoadingRef = useRef(false)
   const processClaudeJsonLineRef = useRef<((line: string) => void) | null>(null)
+
+  // Automation refs
+  const initialTaskSentRef = useRef(false)
+  const terminalConnectedCallbackRef = useRef(false)
+  const claudeReadyCallbackRef = useRef(false)
 
   // Terminal WebSocket URL for ttyd
   const getTerminalWsUrl = useCallback(() => {
@@ -320,6 +336,47 @@ export function WorkspaceTerminal({
       prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
     )
   }, [])
+
+  // Expose sendChatMessage via ref for external control
+  useEffect(() => {
+    if (sendChatMessageRef) {
+      sendChatMessageRef.current = sendChatMessage
+    }
+  }, [sendChatMessage, sendChatMessageRef])
+
+  // Call onTerminalConnected when terminal connects
+  useEffect(() => {
+    if (isConnected && !terminalConnectedCallbackRef.current) {
+      terminalConnectedCallbackRef.current = true
+      onTerminalConnected?.()
+    }
+  }, [isConnected, onTerminalConnected])
+
+  // Call onClaudeReady when Claude is ready
+  useEffect(() => {
+    if (claudeRunning && !claudeReadyCallbackRef.current) {
+      claudeReadyCallbackRef.current = true
+      onClaudeReady?.()
+    }
+  }, [claudeRunning, onClaudeReady])
+
+  // Auto-send initial task when Claude is ready
+  useEffect(() => {
+    if (
+      claudeRunning &&
+      isConnected &&
+      initialTask &&
+      !initialTaskSentRef.current &&
+      !isChatLoading
+    ) {
+      initialTaskSentRef.current = true
+      // Small delay to ensure everything is ready
+      const timer = setTimeout(() => {
+        sendChatMessage(initialTask)
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [claudeRunning, isConnected, initialTask, isChatLoading, sendChatMessage])
 
   // Initialize terminal (for ttyd mode or chat mode - both need the connection)
   useEffect(() => {

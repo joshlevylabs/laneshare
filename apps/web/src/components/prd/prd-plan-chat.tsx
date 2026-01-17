@@ -8,8 +8,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
-import { Loader2, Send, Bot, User, Check, FileText, Sparkles, ChevronRight, MessageSquare } from 'lucide-react'
+import { Loader2, Send, Bot, User, Check, FileText, Sparkles, ChevronRight, MessageSquare, ArrowRight, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 interface ChatOption {
   label: string
@@ -34,6 +35,7 @@ interface PRDPlanChatProps {
   onMarkdownUpdate: (markdown: string) => void
   onFinishPlanning: (markdown?: string) => void
   onConvertAndGenerate?: () => void
+  onMigrateToSidequest?: () => void
 }
 
 export function PRDPlanChat({
@@ -44,9 +46,11 @@ export function PRDPlanChat({
   onMarkdownUpdate,
   onFinishPlanning,
   onConvertAndGenerate,
+  onMigrateToSidequest,
 }: PRDPlanChatProps) {
   const { toast } = useToast()
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [showMigrationBanner, setShowMigrationBanner] = useState(true)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isFetchingHistory, setIsFetchingHistory] = useState(true)
@@ -393,6 +397,39 @@ ${prdContent}`.trim()
 
   return (
     <div className="space-y-4">
+      {/* Migration to Sidequests Banner */}
+      {showMigrationBanner && onMigrateToSidequest && (
+        <Alert className="bg-gradient-to-r from-primary/10 to-primary/5 border-primary/30">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <AlertDescription className="flex items-center justify-between">
+            <div className="flex-1">
+              <span className="font-medium">Try the new Sidequests!</span>
+              <span className="text-muted-foreground ml-2">
+                Enhanced AI planning with hierarchical views, automatic context analysis, and sequential implementation.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 ml-4">
+              <Button
+                size="sm"
+                onClick={onMigrateToSidequest}
+                className="gap-1"
+              >
+                <ArrowRight className="h-3 w-3" />
+                Migrate
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6"
+                onClick={() => setShowMigrationBanner(false)}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="flex items-center justify-between">
         <h3 className="font-semibold flex items-center gap-2">
           <Bot className="h-4 w-4" />

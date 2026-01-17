@@ -56,6 +56,8 @@ import {
   Rocket,
 } from 'lucide-react'
 import { RepoCodespacesPanel } from './repo-codespaces-panel'
+import { DocGenerationProgress } from '../repo-docs/doc-generation-progress'
+import type { DocType, DocJobStatus, DocGenerationPhase } from '@laneshare/shared'
 
 export interface Repo {
   id: string
@@ -85,7 +87,9 @@ interface SyncProgress {
   stage: string | null
 }
 
-interface DocGenProgress {
+// Legacy mode progress
+interface LegacyDocGenProgress {
+  mode?: 'legacy'
   stage: 'starting' | 'calling_api' | 'parsing' | 'continuation' | 'complete' | 'error'
   message: string
   pagesGenerated: number
@@ -93,6 +97,29 @@ interface DocGenProgress {
   maxRounds: number
   continuationAttempt?: number
   lastUpdated?: string
+}
+
+// Parallel mode progress (matches DocGenerationSession)
+interface ParallelDocGenProgress {
+  mode?: 'parallel'
+  phase: 'context' | 'agents_summary' | 'parallel' | 'assembly' | 'complete' | 'error'
+  jobs: Record<string, {
+    status: 'pending' | 'running' | 'completed' | 'failed'
+    startedAt?: string
+    completedAt?: string
+    error?: string
+  }>
+  pagesGenerated: number
+  totalPages: number
+  startedAt?: string
+  lastUpdated?: string
+}
+
+type DocGenProgress = LegacyDocGenProgress | ParallelDocGenProgress
+
+// Type guard for parallel progress
+function isParallelProgress(progress: DocGenProgress | null): progress is ParallelDocGenProgress {
+  return progress !== null && 'phase' in progress
 }
 
 interface RepoCardProps {
@@ -113,8 +140,15 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null)
   const [docGenProgress, setDocGenProgress] = useState<DocGenProgress | null>(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showCodespaceRequiredDialog, setShowCodespaceRequiredDialog] = useState(false)
+  const [pendingForceGenerate, setPendingForceGenerate] = useState(false)
 
   // Collapsible sections
+  const [isDocsOpen, setIsDocsOpen] = useState(
+    repo.doc_status === 'GENERATING' ||
+    repo.doc_status === 'NEEDS_REVIEW' ||
+    repo.status === 'SYNCED' && !repo.doc_status
+  )
   const [isCodespacesOpen, setIsCodespacesOpen] = useState(repo.has_codespaces_token)
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
 
@@ -122,12 +156,36 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
   const isCurrentlySyncing = isSyncing || repo.status === 'SYNCING'
   const isCurrentlyGenerating = isGeneratingDocs || repo.doc_status === 'GENERATING'
 
-  // Check if progress is stale (no update for more than 2 minutes)
+  // Check if progress is stale (no update for more than 3 minutes for parallel mode)
   const isProgressStale = (progress: DocGenProgress | null): boolean => {
-    if (!progress?.lastUpdated) return false
-    const lastUpdate = new Date(progress.lastUpdated).getTime()
+    if (!progress) return false
+    const lastUpdated = isParallelProgress(progress) ? progress.lastUpdated : progress.lastUpdated
+    if (!lastUpdated) return false
+    const lastUpdate = new Date(lastUpdated).getTime()
     const now = Date.now()
-    return now - lastUpdate > 2 * 60 * 1000
+    // 3 minutes for parallel (since requests are staggered), 2 minutes for legacy
+    const staleThreshold = isParallelProgress(progress) ? 3 * 60 * 1000 : 2 * 60 * 1000
+    return now - lastUpdate > staleThreshold
+  }
+
+  // Convert progress to the format expected by DocGenerationProgress component
+  const getParallelProgressForUI = (): {
+    phase: DocGenerationPhase
+    jobs: Record<DocType, { status: DocJobStatus; startedAt?: string; completedAt?: string; error?: string }>
+    pagesGenerated: number
+    totalPages: number
+    startedAt?: string
+    lastUpdated?: string
+  } | null => {
+    if (!docGenProgress || !isParallelProgress(docGenProgress)) return null
+    return {
+      phase: docGenProgress.phase as DocGenerationPhase,
+      jobs: docGenProgress.jobs as Record<DocType, { status: DocJobStatus; startedAt?: string; completedAt?: string; error?: string }>,
+      pagesGenerated: docGenProgress.pagesGenerated,
+      totalPages: docGenProgress.totalPages,
+      startedAt: docGenProgress.startedAt,
+      lastUpdated: docGenProgress.lastUpdated,
+    }
   }
 
   const getStageLabel = (stage: string | null): string => {
@@ -145,13 +203,38 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
 
   const getDocStageLabel = (progress: DocGenProgress | null): string => {
     if (!progress) return 'Generating documentation...'
-    switch (progress.stage) {
+
+    // Handle parallel mode
+    if (isParallelProgress(progress)) {
+      switch (progress.phase) {
+        case 'context':
+          return 'Gathering context...'
+        case 'agents_summary':
+          return 'Generating Agents Summary...'
+        case 'parallel':
+          const completed = progress.pagesGenerated
+          const running = Object.values(progress.jobs).filter(j => j.status === 'running').length
+          return `Generating ${running > 0 ? `(${running} in progress)` : ''}... ${completed}/${progress.totalPages}`
+        case 'assembly':
+          return 'Saving documentation...'
+        case 'complete':
+          return 'Complete'
+        case 'error':
+          return 'Error occurred'
+        default:
+          return 'Generating documentation...'
+      }
+    }
+
+    // Handle legacy mode
+    const legacyProgress = progress as LegacyDocGenProgress
+    switch (legacyProgress.stage) {
       case 'starting':
         return 'Initializing...'
       case 'calling_api':
-        return `Round ${progress.round}/${progress.maxRounds}: Analyzing...`
+        return `Round ${legacyProgress.round}/${legacyProgress.maxRounds}: Analyzing...`
       case 'parsing':
-        return `Round ${progress.round}/${progress.maxRounds}: Processing...`
+        return `Round ${legacyProgress.round}/${legacyProgress.maxRounds}: Processing...`
       case 'continuation':
         return `Generating more pages...`
       case 'complete':
@@ -159,7 +242,7 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
       case 'error':
         return 'Error occurred'
       default:
-        return progress.message || 'Generating documentation...'
+        return legacyProgress.message || 'Generating documentation...'
     }
   }
 
@@ -312,17 +395,24 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
     }
   }
 
-  const handleGenerateDocs = async (force: boolean = false) => {
+  const handleGenerateDocs = async (force: boolean = false, allowApiFallback: boolean = false) => {
     setIsGeneratingDocs(true)
     try {
       const response = await fetch(`/api/projects/${projectId}/repos/${repo.id}/docs/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force, mode: 'parallel' }),
+        body: JSON.stringify({ force, mode: 'parallel', allowApiFallback }),
       })
       const data = await response.json()
 
       if (!response.ok) {
+        // Check if this is a "needs Codespace" error
+        if (data.needsCodespace) {
+          setPendingForceGenerate(force)
+          setShowCodespaceRequiredDialog(true)
+          setIsGeneratingDocs(false)
+          return
+        }
         throw new Error(data.error || 'Failed to generate documentation')
       }
 
@@ -335,7 +425,9 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
       } else {
         toast({
           title: 'Generation Started',
-          description: 'Documentation generation is in progress.',
+          description: allowApiFallback
+            ? 'Documentation generation started using API mode (uses API credits).'
+            : 'Documentation generation is in progress.',
         })
         pollDocProgress(data.bundle_id)
       }
@@ -347,6 +439,11 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
         description: error instanceof Error ? error.message : 'Failed to generate docs',
       })
     }
+  }
+
+  const handleUseApiFallback = () => {
+    setShowCodespaceRequiredDialog(false)
+    handleGenerateDocs(pendingForceGenerate, true)
   }
 
   const handleCancelDocs = async () => {
@@ -488,84 +585,8 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
           </div>
         )}
 
-        {/* Doc Generation Progress */}
-        {isCurrentlyGenerating && (
-          <div className="space-y-2 p-3 bg-purple-50 dark:bg-purple-950/20 rounded-lg border border-purple-200 dark:border-purple-800">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-purple-700 dark:text-purple-300 flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {getDocStageLabel(docGenProgress)}
-              </span>
-              <div className="flex items-center gap-2">
-                {docGenProgress?.pagesGenerated !== undefined && docGenProgress.pagesGenerated > 0 && (
-                  <Badge variant="secondary" className="text-xs">
-                    {docGenProgress.pagesGenerated} pages
-                  </Badge>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0 text-gray-500 hover:text-red-600"
-                  onClick={handleCancelDocs}
-                  disabled={isCancellingDocs}
-                >
-                  {isCancellingDocs ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
-            {isProgressStale(docGenProgress) && (
-              <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
-                <AlertTriangle className="h-3 w-3" />
-                <span>Progress appears stale.</span>
-                <Button
-                  variant="link"
-                  size="sm"
-                  className="h-auto p-0 text-xs underline"
-                  onClick={handleCancelDocs}
-                >
-                  Cancel and retry
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Quick Action Buttons Row */}
+        {/* Quick Action Buttons Row - only show essential actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Primary actions based on status */}
-          {repo.status === 'SYNCED' && (
-            <>
-              {/* Docs button */}
-              {repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW' ? (
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => router.push(`/projects/${projectId}/repos/${repo.id}/docs`)}
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  {repo.doc_status === 'NEEDS_REVIEW' ? 'Review Docs' : 'View Docs'}
-                </Button>
-              ) : !isCurrentlyGenerating ? (
-                <Button variant="outline" size="sm" onClick={() => handleGenerateDocs()}>
-                  <Sparkles className="h-4 w-4 mr-2" />
-                  Generate Docs
-                </Button>
-              ) : null}
-
-              {/* Regenerate if docs exist */}
-              {(repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW') && !isCurrentlyGenerating && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleGenerateDocs(true)}
-                  title="Regenerate documentation"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-              )}
-            </>
-          )}
-
           {/* Open Workspace button - prominent if codespaces configured */}
           {repo.has_codespaces_token && (
             <Button
@@ -587,6 +608,163 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
             </Button>
           )}
         </div>
+
+        {/* Collapsible: Documentation */}
+        {repo.status === 'SYNCED' && (
+          <Collapsible open={isDocsOpen} onOpenChange={setIsDocsOpen}>
+            <CollapsibleTrigger asChild>
+              <button className="w-full flex items-center justify-between py-2 px-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                <div className="flex items-center gap-2">
+                  <FileText className={`h-4 w-4 ${
+                    repo.doc_status === 'READY' ? 'text-green-500' :
+                    repo.doc_status === 'NEEDS_REVIEW' ? 'text-yellow-500' :
+                    repo.doc_status === 'GENERATING' || isCurrentlyGenerating ? 'text-purple-500' :
+                    repo.doc_status === 'ERROR' ? 'text-red-500' :
+                    'text-muted-foreground'
+                  }`} />
+                  <span className="text-sm font-medium">Documentation</span>
+                  {repo.doc_status === 'READY' && (
+                    <Badge variant="outline" className="text-xs border-green-500 text-green-600">
+                      Ready
+                    </Badge>
+                  )}
+                  {repo.doc_status === 'NEEDS_REVIEW' && (
+                    <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-600">
+                      Needs Review
+                    </Badge>
+                  )}
+                  {(repo.doc_status === 'GENERATING' || isCurrentlyGenerating) && (
+                    <Badge variant="outline" className="text-xs border-purple-500 text-purple-600 flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Generating
+                    </Badge>
+                  )}
+                  {repo.doc_status === 'ERROR' && (
+                    <Badge variant="destructive" className="text-xs">
+                      Error
+                    </Badge>
+                  )}
+                </div>
+                {isDocsOpen ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <div className="p-3 bg-muted/30 rounded-lg space-y-3">
+                {/* Generation Progress - Parallel Mode */}
+                {isCurrentlyGenerating && isParallelProgress(docGenProgress) && (
+                  <DocGenerationProgress
+                    progress={getParallelProgressForUI()}
+                    isGenerating={isCurrentlyGenerating}
+                    onCancel={handleCancelDocs}
+                    isCancelling={isCancellingDocs}
+                  />
+                )}
+
+                {/* Generation Progress - Legacy Mode or no detailed progress */}
+                {isCurrentlyGenerating && (!docGenProgress || !isParallelProgress(docGenProgress)) && (
+                  <div className="space-y-2 p-3 bg-purple-50 dark:bg-purple-950/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-purple-700 dark:text-purple-300 flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {getDocStageLabel(docGenProgress)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {docGenProgress?.pagesGenerated !== undefined && docGenProgress.pagesGenerated > 0 && (
+                          <Badge variant="secondary" className="text-xs">
+                            {docGenProgress.pagesGenerated} pages
+                          </Badge>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 text-gray-500 hover:text-red-600"
+                          onClick={handleCancelDocs}
+                          disabled={isCancellingDocs}
+                        >
+                          {isCancellingDocs ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Stale Progress Warning */}
+                {isCurrentlyGenerating && isProgressStale(docGenProgress) && (
+                  <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 p-2 rounded">
+                    <AlertTriangle className="h-3 w-3" />
+                    <span>Progress appears stale.</span>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs underline"
+                      onClick={handleCancelDocs}
+                    >
+                      Cancel and retry
+                    </Button>
+                  </div>
+                )}
+
+                {/* Action Buttons when not generating */}
+                {!isCurrentlyGenerating && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* View/Review docs button - links to unified documents page */}
+                    {(repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW') && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => router.push(`/projects/${projectId}/documents?repo=${repo.id}`)}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        {repo.doc_status === 'NEEDS_REVIEW' ? 'Review Docs' : 'View Docs'}
+                      </Button>
+                    )}
+
+                    {/* Generate or Regenerate */}
+                    {repo.doc_status === 'READY' || repo.doc_status === 'NEEDS_REVIEW' ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleGenerateDocs(true)}
+                      >
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Regenerate
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => handleGenerateDocs()}
+                      >
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Generate Docs
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Error state */}
+                {repo.doc_status === 'ERROR' && !isCurrentlyGenerating && (
+                  <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 p-2 rounded flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>Documentation generation failed.</span>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-sm underline text-red-600"
+                      onClick={() => handleGenerateDocs(true)}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
 
         {/* Collapsible: Codespaces Setup */}
         <Collapsible open={isCodespacesOpen} onOpenChange={setIsCodespacesOpen}>
@@ -713,6 +891,39 @@ export function RepoCard({ repo, projectId }: RepoCardProps) {
             <AlertDialogAction onClick={handleDelete} disabled={isDeleting}>
               {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Codespace Required Dialog */}
+      <AlertDialog open={showCodespaceRequiredDialog} onOpenChange={setShowCodespaceRequiredDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Cloud className="h-5 w-5" />
+              Codespace Required
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p>
+                Documentation generation uses Claude Code in headless mode, which requires an active
+                Codespace with Claude Code running. This uses your Claude subscription instead of API credits.
+              </p>
+              <p className="text-sm">
+                <strong>To use Claude Code:</strong> Open the "Codespaces & Workspace" section below
+                and create a Codespace. Once Claude Code is running, try generating docs again.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Alternatively, you can use API mode which will use API credits instead.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={() => setIsCodespacesOpen(true)}>
+              Set Up Codespace
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleUseApiFallback}>
+              Use API Mode (uses credits)
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
